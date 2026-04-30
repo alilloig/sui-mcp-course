@@ -1,0 +1,8 @@
+{
+  "phase": "red",
+  "exit_code": 1,
+  "phase_pass": true,
+  "started_at": "2026-04-28T19:53:09Z",
+  "ended_at": "2026-04-28T19:53:11Z",
+  "command": "pnpm test"
+}

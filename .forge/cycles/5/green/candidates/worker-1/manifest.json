@@ -1,0 +1,13 @@
+{
+  "worker": 1,
+  "target_files": [
+    "mcp/server/src/pathSafety.ts",
+    "mcp/server/src/ladder.ts",
+    "mcp/server/src/tools/requestHint.ts",
+    "mcp/server/src/schemas/phases.ts",
+    "mcp/server/src/warnings.ts"
+  ],
+  "lines_changed": 87,
+  "blocked": false,
+  "notes": "Security remediation for C021/C022/C012 path-traversal vulnerabilities. Added separate pathSafety.ts with containedPath helper. Three call sites patched: ladder.ts target_file (C021), ladder.ts snapshot bak path (C022), requestHint.ts rung content path (C012). Schema-level defense-in-depth added to validatePhases: slug regex /^[a-z0-9][a-z0-9_-]*$/ for phase.id and spot.id; isValidRelPath for target_file and rungs paths. warnings.ts AutoWriteFailedWarning.kind_detail extended with path-traversal. All existing test IDs (p1-spot-1, p2-spot-1, p1-bootstrap, p2-polling, p1, p2, s1, s2, src/App.tsx) pass both slug and relpath checks."
+}

@@ -1,0 +1,54 @@
+[
+  {
+    "id": "R1-001",
+    "title": "E-001 cold-start cursor lands at p1-bootstrap/p1-spot-1 with state persisted",
+    "severity": "info",
+    "category": "e2e-flow",
+    "file": "paths/01-orderbook-viewer/phases.json",
+    "line_range": "3-28",
+    "description": "Drove start({projectRoot}) and selectPath({slug:'01-orderbook-viewer'}) through the in-process bootHarness against a fresh tempdir projectRoot with the orderbook path copied in. start.outputStyleOk was true and the registry surfaced 01-orderbook-viewer. selectPath returned ok:true. <projectRoot>/.sui-deepbook-course/state.json was created with cursor.phase_id='p1-bootstrap' and cursor.spot_id='p1-spot-1'. nextSpot returned phase.id='p1-bootstrap', spot.id='p1-spot-1', target_file='src/App.tsx', target_range='39-58' verbatim from the manifest.",
+    "impact": "AC-1.2 / AC-4.2 / AC-7.4 hold: the cold-start happy path reaches phase 1 spot 1 with state persisted and target file/range matching the spec.",
+    "recommendation": "No action required. Cycle 6 did not regress E-001.",
+    "evidence": "scenario E-001 exercised end-to-end via bootHarness; assertion cold-start-cursor-at-p1-bootstrap-p1-spot-1 held",
+    "confidence": "high"
+  },
+  {
+    "id": "R1-002",
+    "title": "E-005 registry extensibility: synthetic 04-fake-path discovered without code change",
+    "severity": "info",
+    "category": "e2e-flow",
+    "file": "mcp/server/src/registry.ts",
+    "line_range": "22-154",
+    "description": "Synthesized paths/04-fake-path/{path.json,phases.json} (valid schema, slug 04-fake-path, one phase, one spot) into a tempdir projectRoot alongside the real 01-orderbook-viewer. start surfaced both slugs in the paths array; selectPath({slug:'04-fake-path'}) returned ok:true. The registry scanner walked the new directory, validated path.json + phases.json, and registered the path with no code change.",
+    "impact": "AC-3.1 holds: the registry is data-driven and extensible. New paths drop in without engine modification.",
+    "recommendation": "No action required.",
+    "evidence": "scenario E-005 exercised end-to-end via bootHarness; assertion synthetic-04-fake-path-discovered-and-selectable held",
+    "confidence": "high"
+  },
+  {
+    "id": "R1-003",
+    "title": "E-014 p3 substitution: poll_interval_ms=5000 renders into p3-spot-1 prompt",
+    "severity": "info",
+    "category": "e2e-flow",
+    "file": "paths/01-orderbook-viewer/phases.json",
+    "line_range": "57-83",
+    "description": "Drove start → selectPath('01-orderbook-viewer') → setPersonalization({poll_interval_ms:5000, pool_subset:'DEEP_SUI'}) → cursor seeded to p3-poll/p3-spot-1 → nextSpot. The rendered nextSpot.spot.prompt contained the literal substring '5000' and did NOT contain '{{ poll_interval_ms }}' or '{{poll_interval_ms}}'. nextSpot.spot.target_file='src/App.tsx' and nextSpot.spot.target_range='116-145' verbatim from the manifest (substitution did not bleed into structural fields). phases.json now declares phase id 'p3-poll' (round 1 had 'p3-display'); the prompt embeds the literal '{{ poll_interval_ms }}' placeholder twice (once narrative, once setInterval).",
+    "impact": "AC-6.3 holds: personalization values substitute into prompts only, not into target_file / target_range / verification. Round 1 H001 is closed.",
+    "recommendation": "No action required.",
+    "evidence": "scenario E-014 exercised end-to-end via bootHarness; assertion p3-prompt-contains-5000-not-placeholder held",
+    "confidence": "high"
+  },
+  {
+    "id": "R1-004",
+    "title": "E-015 resume cursor at p2-retry: nextSpot returns p2-retry/p2-spot-1 done:false",
+    "severity": "info",
+    "category": "e2e-flow",
+    "file": "paths/01-orderbook-viewer/phases.json",
+    "line_range": "30-55",
+    "description": "Seeded <projectRoot>/.sui-deepbook-course/state.json with schema_version=1, selected_path='01-orderbook-viewer', cursor={phase_id:'p2-retry', spot_id:'p2-spot-1'}, ladder.p1-spot-1.hint_used=true. Booted harness; start returned outputStyleOk:true with state.cursor preserved at p2-retry/p2-spot-1. nextSpot returned done:false, phase.id='p2-retry', spot.id='p2-spot-1', target_file='src/App.tsx', target_range='103-114'. Ladder state (hint_used=true on p1-spot-1) was preserved across the call. phases.json now declares phase id 'p2-retry' (round 1 had 'p2-polling'), so getCurrentSpot resolves the seeded cursor instead of returning {done:true}.",
+    "impact": "AC-7.1 holds: a re-run resumes at the recorded cursor without re-prompting. Round 1 H001 (E-015 root cause) is closed.",
+    "recommendation": "No action required.",
+    "evidence": "scenario E-015 exercised end-to-end via bootHarness; assertion seeded-p2-retry-cursor-resolves-done-false held",
+    "confidence": "high"
+  }
+]

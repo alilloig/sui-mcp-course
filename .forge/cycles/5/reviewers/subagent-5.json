@@ -1,0 +1,67 @@
+[
+  {
+    "id": "R5-001",
+    "title": "T-091 amendment widens shell-literal scope to basename match — tools/ is not enforced",
+    "severity": "low",
+    "category": "tests-vs-impl",
+    "file": "tests/requestHint.test.ts",
+    "line_range": "1104-1127",
+    "description": "The orchestrator amendment to T-091 swapped 'kind:shell literal confined to runPreflightProbe.ts' for an ALLOWED set {runPreflightProbe.ts, preflight.ts, manifest.ts} matched against `path.basename(f)`. Because the comparison is on basename only, a hypothetical future regression that adds a NEW tool file named (e.g.) `tools/manifest.ts` containing kind:'shell' would slip past T-091 entirely. The synthesis-notes correctly observes that the load-bearing intent is 'no NEW tool emits shell actions' and that T-148 in runPreflightProbe.test.ts still enforces the per-tool-file claim within mcp/server/src/tools/ (only runPreflightProbe.ts is allowed). So the invariant is still covered in aggregate, but T-091 standalone is now permissive about file location.",
+    "impact": "Non-load-bearing in practice (T-148 catches the load-bearing tools/ regression). Future cycles should re-tighten T-091 by checking path.relative against an absolute file allowlist — e.g. ALLOWED = new Set(['mcp/server/src/preflight.ts', 'mcp/server/src/probes/manifest.ts', 'mcp/server/src/tools/runPreflightProbe.ts']) — so renaming or relocating an emitter is caught.",
+    "recommendation": "Optionally tighten the ALLOWED set to absolute relative paths instead of basenames; or simply note the tightening as a cycle-6 follow-up since T-148 already covers the load-bearing per-tool claim.",
+    "evidence": "const ALLOWED = new Set([\n      'runPreflightProbe.ts',\n      'preflight.ts',\n      'manifest.ts',\n    ]);\n    const offenders: string[] = [];\n    for (const f of files) {\n      const c = fs.readFileSync(f, 'utf8');\n      if (/kind\\s*:\\s*['\"]shell['\"]/.test(c)) offenders.push(f);\n    }\n    for (const f of offenders) {\n      expect(ALLOWED.has(path.basename(f)), `unexpected shell-literal in ${f}`).toBe(true);\n    }",
+    "confidence": "high"
+  },
+  {
+    "id": "R5-002",
+    "title": "Snapshot rotation collides on millisecond-fast successive rung-3 calls — A7 append-only claim is not enforced under racy timing",
+    "severity": "low",
+    "category": "tests-vs-impl",
+    "file": "mcp/server/src/ladder.ts",
+    "line_range": "189-216",
+    "description": "runAutoWrite rotates an existing .bak to `.bak.<ISO-timestamp-no-colons>` using `new Date().toISOString().replace(/:/g, '')`. The timestamp has millisecond precision. A third (or any subsequent) rung-3 invocation that fires within the same millisecond as a previous rotation would compute the same rotated path, and `fsPromises.rename(bakPath, rotatedPath)` would silently overwrite the prior rotated archive on POSIX (rename onto an existing file is destructive). The contract A7 claims 'snapshot files are append-only across rung-3 attempts', but T-018 (requestHint) and T-052 (ladder) only exercise TWO rung-3 calls — the byte-fidelity assertions check only the first rotation, never the second. The implementation does NOT add a counter or recheck collision before rename, so no test catches sub-ms back-to-back rotations.",
+    "impact": "Real-world impact is negligible (a student will not press rung-3 twice within 1ms), but the test-vs-impl pairing for A7 is technically loose: the contract's append-only claim is asserted by tests that only cover one rotation step, leaving a gap that the impl quietly papers over with rename's overwrite semantics.",
+    "recommendation": "Either (a) add a third rung-3 invocation in T-018/T-052 with a vi.useFakeTimers() that holds the system clock at a fixed instant, asserting both rotated archives co-exist (would require the impl to add a collision-resolving suffix); or (b) explicitly note in the contract that rotation is best-effort and update A7 wording. Option (a) makes the invariant tight; option (b) downgrades A7 to a documentation note.",
+    "evidence": "const ts = new Date().toISOString().replace(/:/g, '');\n    const rotatedPath = `${bakPath}.${ts}`;\n    await fsPromises.rename(bakPath, rotatedPath);",
+    "confidence": "medium"
+  },
+  {
+    "id": "R5-003",
+    "title": "A6 source-grep tests cover only requestHint.ts and ladder.ts — contract scope says all engine code",
+    "severity": "low",
+    "category": "tests-vs-impl",
+    "file": "tests/requestHint.test.ts",
+    "line_range": "996-1002",
+    "description": "Contract A6 specifies the literal `auto_completed = false` 'matches in zero lines' across `mcp/server/src/**/*.ts` (excluding the schema's default-on-load branch and tests). T-039 (requestHint.test.ts:997) and T-040 (ladder.test.ts:674) only inspect those two cycle-5 files. A regression in any other engine file (e.g. nextSpot.ts, verifySpot.ts, phaseEngine.ts) that introduces an `auto_completed = false` re-write would not be caught. Today no such occurrences exist (verified with `grep -rn 'auto_completed\\s*=\\s*false' mcp/server/src/`), so the gap is theoretical, but the tests do not enforce A6's stated scope.",
+    "impact": "Currently unobservable — no engine code outside the two cycle-5 files writes `auto_completed = false`. But future cycles that touch the cursor-advance or state-merge logic could regress AC-5.4 (auto_completed permanence) and the existing source-grep tests would not flag it.",
+    "recommendation": "Add a single source-grep test that walks all .ts under `mcp/server/src/` (excluding `schemas/state.ts`'s default-on-load branch and tests/) and asserts zero `auto_completed = false` literals. This widens the AC-5.4 coverage to match the contract scope.",
+    "evidence": "it('T-039: requestHint.ts contains zero \"auto_completed = false\" assignments', () => {\n    const sourcePath = path.join(REPO_ROOT, 'mcp', 'server', 'src', 'tools', 'requestHint.ts');\n    const content = fs.readFileSync(sourcePath, 'utf8');\n    expect(/auto_completed\\s*=\\s*false/.test(content)).toBe(false);\n  });",
+    "confidence": "high"
+  },
+  {
+    "id": "R5-004",
+    "title": "harness.lesson E-004 traversal bypasses MCP transport for requestHint when verifyStub is set",
+    "severity": "info",
+    "category": "tests-vs-impl",
+    "file": "scripts/e2e/harness.ts",
+    "line_range": "130-157",
+    "description": "When the harness has `verifyStub` installed (via `withVerifyStub`), `callTool('requestHint', ...)` short-circuits to call `runRequestHint` directly with the stub spawn. The MCP client/server round-trip is skipped. T-096/T-097/T-098 (the E-004 traversal cases) all install withVerifyStub before calling requestHint, so those tests do NOT exercise the MCP wire shape for requestHint. This is reasonable engineering (otherwise the rung-3 dispatch would shell out to pnpm), and T-107 covers the gap by calling `harness.callTool('requestHint', ...)` WITHOUT a verifyStub, asserting the SDK does not reply 'tool not found'. So in aggregate the MCP registration is end-to-end-tested. Worth noting because the question 'does E-004 drive through the MCP transport?' has the nuanced answer 'no for the verify-pass path; yes via T-107 smoke marker'.",
+    "impact": "None operationally — T-107 closes the gap. Documenting this is useful for future reviewers who want to verify that requestHint's wire boundary is exercised.",
+    "recommendation": "No change needed. If a future cycle wants stricter MCP coverage, add an E-004 variant that drives only rung-1 and rung-2 (which have no verifySpot dispatch) without the verifyStub, so the full MCP round-trip is exercised on the happy path.",
+    "evidence": "if (toolName === 'requestHint' && verifyStub !== null) {\n        const stub = verifyStub;\n        const stubSpawn: VerifySpawnFn = () => ({ ... });\n        const result = await runRequestHint(\n          { projectRoot: projectRootArg, rung: rungArg },\n          { spawn: stubSpawn },\n        );",
+    "confidence": "high"
+  },
+  {
+    "id": "R5-005",
+    "title": "T-094 back-compat test does not exercise auto_write_attempted=true preservation on load",
+    "severity": "info",
+    "category": "tests-vs-impl",
+    "file": "tests/requestHint.test.ts",
+    "line_range": "1151-1172",
+    "description": "T-094 verifies that a legacy state.json without `auto_write_attempted` loads to kind:'ok' with the field defaulted to false. It does NOT assert that an EXISTING `auto_write_attempted: true` value is preserved through load — which is the case that exercises append-only durability (a student who completed rung-3 in cycle 4 expects that flag to survive). The schema implementation (`mcp/server/src/schemas/state.ts:94`) handles both cases via `typeof r['auto_write_attempted'] === 'boolean' ? r['auto_write_attempted'] : false`, so today the impl is correct. But the test only covers the absent-field path.",
+    "impact": "If a future schema-normalization refactor accidentally clobbered an existing true value to false (e.g., by always defaulting), no test would catch it. AC-5.4 (auto_completed permanent) is durability-tested via T-097 (session restart), but the schema-load-level back-compat test for auto_write_attempted is one-sided.",
+    "recommendation": "Add a one-line companion case to T-094 with `auto_write_attempted: true` in the legacy shape and assert `result.value.ladder['p1-spot-1'].auto_write_attempted === true` after load.",
+    "evidence": "const legacyShape = {\n      ...\n      ladder: {\n        'p1-spot-1': {\n          hint_used: true,\n          reference_shown: false,\n          auto_completed: false,\n        },\n      },\n      ...\n    };\n    const result = mod.validateState(legacyShape);\n    expect(result.ok).toBe(true);\n    if (result.ok) {\n      expect(result.value.ladder['p1-spot-1'].auto_write_attempted).toBe(false);\n    }",
+    "confidence": "medium"
+  }
+]

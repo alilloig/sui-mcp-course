@@ -1,0 +1,24 @@
+{
+  "worker": 2,
+  "target_files": [
+    ".claude-plugin/plugin.json",
+    "commands/start.md",
+    "skills/course-engine/SKILL.md",
+    "mcp/server/package.json",
+    "mcp/server/tsconfig.json",
+    "mcp/server/src/index.ts",
+    "mcp/server/src/outputStyle.ts",
+    "mcp/server/src/registry.ts",
+    "mcp/server/src/tools/start.ts",
+    "mcp/server/src/schemas/path.ts",
+    "mcp/server/src/schemas/phases.ts",
+    "paths/01-orderbook-viewer/path.json",
+    "paths/01-orderbook-viewer/phases.json",
+    "paths/01-orderbook-viewer/description.md",
+    "scripts/e2e/harness.ts",
+    "pnpm-workspace.yaml",
+    "README.md"
+  ],
+  "lines_changed": 586,
+  "blocked": false
+}

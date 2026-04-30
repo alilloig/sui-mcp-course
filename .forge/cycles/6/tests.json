@@ -1,0 +1,152 @@
+[
+  {
+    "id": "T-301",
+    "name": "phases.json declares p2-retry phase id with target_range 103-114 and explainer phases/p2.md",
+    "behavior": "Reads paths/01-orderbook-viewer/phases.json. Parses JSON, asserts the phases array contains an entry with id='p2-retry'. That entry's spots[0] MUST have target_range='103-114', target_file='src/App.tsx', and a non-empty rungs object pointing at rungs/p2-spot-1/{hint,reference,auto}.md. The phase entry MUST carry explainer_md ending in 'phases/p2.md'. Asserts phase id 'p2-polling' is NOT present (rename, not addition).",
+    "kind": "unit",
+    "target_file": "paths/01-orderbook-viewer/phases.json",
+    "test_file": "tests/cycle6.manifest.test.ts",
+    "ac_anchor": "AC-6.3",
+    "scenario_id": "E-015"
+  },
+  {
+    "id": "T-302",
+    "name": "phases.json declares p3-poll phase id with target_range 116-145 and {{ poll_interval_ms }} placeholder",
+    "behavior": "Reads paths/01-orderbook-viewer/phases.json. Asserts the phases array contains an entry with id='p3-poll' whose spots[0] has target_range='116-145' and explainer_md (on the phase) ending in 'phases/p3.md'. Asserts spots[0].prompt contains the literal substring '{{ poll_interval_ms }}' (verbatim, including braces). Asserts a non-empty rungs object pointing at rungs/p3-spot-1/{hint,reference,auto}.md. Asserts phase id 'p3-display' is NOT present.",
+    "kind": "unit",
+    "target_file": "paths/01-orderbook-viewer/phases.json",
+    "test_file": "tests/cycle6.manifest.test.ts",
+    "ac_anchor": "AC-6.3",
+    "scenario_id": "E-014"
+  },
+  {
+    "id": "T-303",
+    "name": "substitutePromptOnly renders 5000 in p3-spot-1 prompt when poll_interval_ms=5000",
+    "behavior": "Loads paths/01-orderbook-viewer/phases.json via loadPhases('01-orderbook-viewer') against a temp projectRoot that copies the production paths/ tree. Locates spots[0] under phase id='p3-poll'. Calls substitutePromptOnly(spot.prompt, { poll_interval_ms: 5000 }). Asserts the returned string contains the literal '5000' AND does NOT contain '{{ poll_interval_ms }}' anywhere. Negative assertion: substitution is applied to prompt only — does NOT touch verification.endpoint or target_range fields on the spot (their values must be unchanged regardless).",
+    "kind": "unit",
+    "target_file": "paths/01-orderbook-viewer/phases.json",
+    "test_file": "tests/cycle6.manifest.test.ts",
+    "ac_anchor": "AC-6.3",
+    "scenario_id": "E-014"
+  },
+  {
+    "id": "T-304",
+    "name": "getCurrentSpot resolves p2-retry/p2-spot-1 to a non-done Spot",
+    "behavior": "Loads paths/01-orderbook-viewer/phases.json into a PhasesData via loadPhases. Builds a synthetic State with cursor={phase_id:'p2-retry', spot_id:'p2-spot-1'} (other fields seeded with valid placeholders, schema_version=1). Calls getCurrentSpot(state, phases). Asserts result.done === false, result.phase.id === 'p2-retry', result.spot.id === 'p2-spot-1', and result.spot.target_range === '103-114'.",
+    "kind": "unit",
+    "target_file": "paths/01-orderbook-viewer/phases.json",
+    "test_file": "tests/cycle6.manifest.test.ts",
+    "ac_anchor": "AC-6.3",
+    "scenario_id": "E-015"
+  },
+  {
+    "id": "T-305",
+    "name": "rungs and phases content packs for p2/p3 exist on disk and are non-empty",
+    "behavior": "Asserts each of the following files exists under paths/01-orderbook-viewer/ and has non-zero byte length when read with fs.readFileSync utf8: rungs/p2-spot-1/hint.md, rungs/p2-spot-1/reference.md, rungs/p2-spot-1/auto.md, rungs/p3-spot-1/hint.md, rungs/p3-spot-1/reference.md, rungs/p3-spot-1/auto.md, phases/p2.md, phases/p3.md. Additionally asserts rungs/p3-spot-1/reference.md contains the literal '{{ poll_interval_ms }}' (the placeholder must survive into the reference snippet so substitution at requestHint time can fire).",
+    "kind": "unit",
+    "target_file": "paths/01-orderbook-viewer/rungs/p2-spot-1/hint.md",
+    "test_file": "tests/cycle6.manifest.test.ts",
+    "ac_anchor": "AC-6.3",
+    "scenario_id": "E-004"
+  },
+  {
+    "id": "T-306",
+    "name": "outputStyle returns plugin-not-enabled warning when enabledPlugins is missing or non-object",
+    "behavior": "Sets HOME to a temp dir. Writes ~/.claude/settings.json containing JSON with NO enabledPlugins field (e.g. { someOtherSetting: true }). Calls probeOutputStyle(). Asserts result.ok===false, result.warning is defined, result.warning.kind==='output-style-plugin-not-enabled', result.warning.message is a string containing BOTH the substring 'learning-output-style@claude-plugins-official' AND the substring 'claude plugins enable learning-output-style@claude-plugins-official'. Repeats the same assertion for a settings file where enabledPlugins is a non-object value (e.g. enabledPlugins: 'not-an-object'). Both branches MUST emit the same warning shape.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/outputStyle.ts",
+    "test_file": "tests/cycle6.outputStyle.test.ts",
+    "ac_anchor": "AC-1.1",
+    "scenario_id": "E-002"
+  },
+  {
+    "id": "T-307",
+    "name": "outputStyle returns plugin-not-enabled warning when plugin key is absent or non-true",
+    "behavior": "Sets HOME to a temp dir. Writes ~/.claude/settings.json with enabledPlugins={} (key absent). Calls probeOutputStyle(); asserts result.ok===false, result.warning.kind==='output-style-plugin-not-enabled', result.warning.message contains both 'learning-output-style@claude-plugins-official' and 'claude plugins enable learning-output-style@claude-plugins-official'. Repeats with enabledPlugins={'learning-output-style@claude-plugins-official': false}; same shape MUST be returned. Repeats with enabledPlugins={'learning-output-style@claude-plugins-official': 'truthy-but-not-true'}; same shape MUST be returned.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/outputStyle.ts",
+    "test_file": "tests/cycle6.outputStyle.test.ts",
+    "ac_anchor": "AC-1.1",
+    "scenario_id": "E-002"
+  },
+  {
+    "id": "T-308",
+    "name": "start tool propagates output-style-plugin-not-enabled warning into response.warnings and writes no state.json",
+    "behavior": "Sets HOME to a temp dir with ~/.claude/settings.json containing enabledPlugins={'learning-output-style@claude-plugins-official': false}. Builds a temp projectRoot with a minimal valid paths/ tree (or empty paths/). Calls runStart({projectRoot}). Asserts the returned StartResult has outputStyleOk===false AND warnings is an array containing at least one entry whose kind==='output-style-plugin-not-enabled' and whose message contains 'learning-output-style@claude-plugins-official'. Negative assertion: NO state.json file exists at <projectRoot>/.sui-deepbook-course/state.json after the call (preserves AC-1.3).",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/start.ts",
+    "test_file": "tests/cycle6.outputStyle.test.ts",
+    "ac_anchor": "AC-1.1",
+    "scenario_id": "E-002"
+  },
+  {
+    "id": "T-309",
+    "name": "selectPath mints a fresh state when loadState returns corrupt+archivedTo",
+    "behavior": "Builds a temp projectRoot with a valid paths/01-orderbook-viewer/ fixture (path.json + phases.json with at least one phase/spot). Sets HOME to a temp dir with valid plugin-enabled settings.json. Seeds <projectRoot>/.sui-deepbook-course/state.json with INVALID JSON ('{not json'). Calls runSelectPath({projectRoot, slug:'01-orderbook-viewer'}). Asserts the result is {ok:true, ...} (NOT {ok:false, errors:[...]}). After the call, asserts state.json exists at the expected path, parses as valid JSON, has schema_version===1, selected_path==='01-orderbook-viewer', and cursor.phase_id matches the first phase id in phases.json with cursor.spot_id matching that phase's first spot id. Asserts at least one state.corrupt-*.json archive exists under .sui-deepbook-course/.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/selectPath.ts",
+    "test_file": "tests/cycle6.state.test.ts",
+    "ac_anchor": "AC-7.2",
+    "scenario_id": "E-006"
+  },
+  {
+    "id": "T-310",
+    "name": "repeated start calls on identical corrupt bytes emit exactly one archive file",
+    "behavior": "Builds a temp projectRoot with a minimal valid paths/ tree. Sets HOME to a temp dir with plugin-enabled settings.json. Seeds .sui-deepbook-course/state.json with INVALID JSON ('garbage-not-json'). Calls runStart({projectRoot}) THREE times in sequence (no cleanup between calls; the corrupt bytes persist because start does not unlink state.json). After all three calls, reads the directory listing of .sui-deepbook-course/ and counts entries matching the regex /^state\\.corrupt-.*\\.json$/. Asserts the count === 1 (NOT 3). Asserts state.json still exists with the original corrupt bytes (start does not mutate state.json on the corrupt path).",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/start.ts",
+    "test_file": "tests/cycle6.state.test.ts",
+    "ac_anchor": "AC-7.2",
+    "scenario_id": "E-006"
+  },
+  {
+    "id": "T-311",
+    "name": "archive bytes equal pre-recovery state.json bytes byte-for-byte",
+    "behavior": "Builds a temp projectRoot. Seeds .sui-deepbook-course/state.json with a specific corrupt byte sequence (e.g. the literal string '{\"schema_version\": 1, broken json here'). Captures those bytes via fs.readFileSync(stateFile) (no encoding — Buffer) BEFORE invoking any loadState/start. Calls loadState(projectRoot). Asserts the returned result has kind==='corrupt' and archivedTo is a defined string. Reads the archive file at result.archivedTo via fs.readFileSync (Buffer). Asserts the archive bytes are byte-equal (Buffer.compare === 0) to the pre-recovery bytes captured earlier.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/state.ts",
+    "test_file": "tests/cycle6.state.test.ts",
+    "ac_anchor": "AC-7.2",
+    "scenario_id": "E-006"
+  },
+  {
+    "id": "T-312",
+    "name": "runPreflightProbe threads probeOpts through runDeployRemediation precondition gate",
+    "behavior": "Ensures process.env.E2E_DEPLOY_STUB is unset (real-mode precondition path). Builds a stub SpawnFn that simulates `docker info` exiting with code 1 and stderr 'Cannot connect to the Docker daemon'. Builds passing stubs for sui-cli-version (returns 'sui 1.63.2') and sandbox-repo-present (no-op pass). Calls runPreflightProbe({probeId:'sandbox-manifest-reachable', remediate:true, probeOpts:{'docker-running':{spawn:stubDockerSpawn}, 'sui-cli-version':{spawn:stubSuiSpawn}}}). Asserts the returned result.pass===false, result.warning is defined, result.warning.kind==='preflight-deploy-precondition-failed', and result.warning.probeId==='docker-running' (NOT 'sui-cli-version' or any other probe). Additionally tracks all child_process.spawn invocations during the call via a vi.spyOn on node:child_process.spawn; asserts NO call used command 'pnpm' with args containing 'deploy-all'.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/runPreflightProbe.ts",
+    "test_file": "tests/cycle6.preflight.test.ts",
+    "ac_anchor": "AC-2.4",
+    "scenario_id": "E-010"
+  },
+  {
+    "id": "T-313",
+    "name": "scenarios.json E-008 preconditions list contains the Sui CLI 1.63.2-1.64.1 range",
+    "behavior": "Reads .forge/e2e/scenarios.json. Parses JSON, locates the scenario with id==='E-008'. Asserts that scenario's preconditions array contains a string entry that includes ALL of the substrings 'Sui CLI', '1.63.2', and '1.64.1' (allows both '–' en-dash and '-' hyphen between the two version anchors by checking each numeric anchor independently). Asserts the existing four E-008 preconditions (one mentioning 'Docker Desktop', one mentioning 'learning-output-style', one mentioning 'deepbook-sandbox', one mentioning 'NOT currently deployed') are still present (addition, not replacement). Asserts the preconditions array has length === 5.",
+    "kind": "integration",
+    "target_file": ".forge/e2e/scenarios.json",
+    "test_file": "tests/cycle6.scenarios.test.ts",
+    "ac_anchor": "AC-2.5",
+    "scenario_id": "E-008"
+  },
+  {
+    "id": "T-314",
+    "name": "cycle-e2e-pass.sh emits skip-with-reason for E-008 when host sui-cli is out of supported range",
+    "behavior": "Asserts scripts/cycle-e2e-pass.sh exists and is executable (fs.statSync.mode & 0o111 !== 0). Spawns the script via child_process.spawnSync with a controlled PATH that prepends a temp dir containing a fake `sui` shim (a small shell script that prints 'sui 1.69.2-abc' to stdout and exits 0). Targets only E-008 via the script's scenario filter argument (best-effort: passes 'E-008' as a CLI arg; if the script does not support filtering, the assertion still holds because the test inspects stdout for the E-008-skip line). Captures stdout and stderr. Asserts the script exits 0 (skip is NOT a failure exit). Asserts combined stdout+stderr contains the substring 'E-008' AND a skip indicator (one of 'skip', 'skipped', or 'SKIP') AND the substring 'sui' (case-insensitive — the reason names the probe). Negative assertion: combined output does NOT contain 'pnpm deploy-all' (the real deploy MUST NOT spawn).",
+    "kind": "integration",
+    "target_file": "scripts/cycle-e2e-pass.sh",
+    "test_file": "tests/cycle6.scenarios.test.ts",
+    "ac_anchor": "AC-2.5",
+    "scenario_id": "E-008"
+  },
+  {
+    "id": "T-315",
+    "name": "after rung-3 advance at p1-spot-1, nextSpot returns cursor at p2-retry/p2-spot-1",
+    "behavior": "Boots the harness with a temp projectRoot containing a copy of paths/01-orderbook-viewer/. Sets HOME to a temp dir with valid plugin-enabled settings.json. Drives the full happy path through the MCP surface: callTool('start') (asserts outputStyleOk===true), callTool('selectPath',{slug:'01-orderbook-viewer'}), callTool('setPersonalization',{values:{poll_interval_ms:3000, pool_subset:'both'}}), callTool('nextSpot') (asserts cursor at p1-bootstrap/p1-spot-1). Then calls harness.withVerifyStub({pass:true}) and harness.requestHint at rung=1, then rung=2, then rung=3 in order so the rung-3 auto-verify advances the cursor. After rung 3 dispatches verifySpot and the cursor advances, calls callTool('nextSpot') again. Parses the returned envelope and asserts the result has done===false, phase.id==='p2-retry', spot.id==='p2-spot-1' (NOT done:true, NOT 'p2-polling'). Additionally calls harness.requestHint with rung=1 at the new cursor; asserts the returned payload is a non-empty string (proving rungs/p2-spot-1/hint.md is loadable).",
+    "kind": "unit",
+    "target_file": "paths/01-orderbook-viewer/phases.json",
+    "test_file": "tests/cycle6.ladder.test.ts",
+    "ac_anchor": "AC-4.2",
+    "scenario_id": "E-004"
+  }
+]

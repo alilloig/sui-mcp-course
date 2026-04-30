@@ -1,0 +1,65 @@
+{
+  "phases": [
+    {
+      "id": "p1-bootstrap",
+      "title": "Phase 1: SDK Configuration",
+      "explainer_md": "phases/p1-bootstrap.md",
+      "spots": [
+        {
+          "id": "p1-spot-1",
+          "title": "Wire the DeepBook SDK config",
+          "target_file": "src/App.tsx",
+          "target_range": "39-58",
+          "prompt": "In src/App.tsx lines 39–58, implement the three helper functions: packageIds(), coinMap(), and poolMap(). These functions extract the on-chain addresses from the sandbox deployment manifest and build the DeepBook SDK configuration objects. Wire {{ pool_subset }} as the pool scope for your viewer.",
+          "rungs": {
+            "hint_md": "rungs/p1-spot-1/hint.md",
+            "reference_md": "rungs/p1-spot-1/reference.md",
+            "auto_write_md": "rungs/p1-spot-1/auto.md"
+          },
+          "doc_links": [
+            ".sui-docs/develop/transactions/ptbs/inputs-and-results.mdx",
+            ".ts-sdk-docs/sui/clients/grpc.mdx"
+          ],
+          "verification": {
+            "mode": "compile",
+            "command": "pnpm build"
+          }
+        }
+      ]
+    },
+    {
+      "id": "p2-polling",
+      "title": "Phase 2: Polling Loop",
+      "spots": [
+        {
+          "id": "p2-spot-1",
+          "title": "Implement polling loop (TBD)",
+          "target_file": "src/App.tsx",
+          "target_range": "103-114",
+          "prompt": "TBD in cycle 5+: Implement the polling loop that queries midPrice and level-2 ticks every poll_interval_ms milliseconds.",
+          "verification": {
+            "mode": "compile",
+            "command": "pnpm build"
+          }
+        }
+      ]
+    },
+    {
+      "id": "p3-display",
+      "title": "Phase 3: Display",
+      "spots": [
+        {
+          "id": "p3-spot-1",
+          "title": "Render the orderbook table (TBD)",
+          "target_file": "src/App.tsx",
+          "target_range": "116-145",
+          "prompt": "TBD in cycle 5+: Render the bids and asks arrays into an HTML table with price/quantity columns.",
+          "verification": {
+            "mode": "compile",
+            "command": "pnpm build"
+          }
+        }
+      ]
+    }
+  ]
+}

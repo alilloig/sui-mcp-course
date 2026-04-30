@@ -1,0 +1,54 @@
+[
+  {
+    "id": "R5-001",
+    "title": "E-010 T-159 still fails live; harness never threads docker stub via probeOpts",
+    "severity": "high",
+    "category": "e2e-flow",
+    "file": "scripts/e2e/harness.ts",
+    "line_range": "85-104",
+    "description": "Cycle 6 H004 added the `probeOpts` argument to the production `runPreflightProbe` tool and threads it into `runDeployRemediation`'s precondition checker. That part is correct. But the harness fixture `withDockerStub` only registers a stub keyed by probeId='docker-running' in `probeSpawnStubs`. When a test calls `runPreflightProbe('sandbox-manifest-reachable', { remediate: true })` through the harness, the callTool intercept at line 85-104 only short-circuits when the OUTER probeId matches the stub map. For sandbox-manifest-reachable, no stub matches, so the call falls through to the production MCP client — which receives args WITHOUT `probeOpts`. The precondition gate then runs against the REAL docker, sui-cli, sandbox-repo. On this dev box (sui 1.69.2, real docker), the gate short-circuits at sui-cli-version BEFORE reaching docker. T-159 fails live with: `Precondition probe 'sui-cli-version' failed: Sui CLI version 1.69.2 is outside the supported range`. The round-1 HIGH is therefore not closed — the harness ergonomics for E-010 were not repaired. Cycle 6 green.log shows the test as passing, but live it fails, so cycle 6 green either ran on a machine with in-range sui or the test was effectively non-deterministic.",
+    "impact": "E-010 cannot be reliably driven through the standard harness fixtures. The precondition-gate behavior cycle 6 was supposed to verify only works in tests that bypass the harness and call `runPreflightProbe` (or `runDeployRemediation`) directly with hand-built `probeOpts`. T-159 — the canonical E-010 regression test — still fails on any developer box that doesn't happen to have a sui CLI in 1.63.2–1.64.1. CI runs are equally vulnerable.",
+    "recommendation": "In `scripts/e2e/harness.ts` callTool intercept (line 85): when toolName === 'runPreflightProbe' AND probeId === 'sandbox-manifest-reachable', do NOT short-circuit on the outer-probe stub map; instead, build a `probeOpts` object from `probeSpawnStubs` (e.g. `{ 'docker-running': { spawn: ... }, 'sui-cli-version': { spawn: ... } }`) and forward it through to the underlying tool call (or call `runPreflightProbe` directly with it). This way `withDockerStub({exitCode:1})` correctly drives the docker precondition fail when remediation is invoked.",
+    "evidence": "Live run output: 'Precondition probe \\'sui-cli-version\\' failed: Sui CLI version 1.69.2 is outside the supported range (1.63.2–1.64.1).' — expected probeId 'docker-running'. Scenario E-010.",
+    "confidence": "high"
+  },
+  {
+    "id": "R5-002",
+    "title": "E-009 sandbox-repo-absent passes; HOME repointing yields exact clone command",
+    "severity": "info",
+    "category": "e2e-flow",
+    "file": "mcp/server/src/probes/sandboxRepo.ts",
+    "line_range": "9-28",
+    "description": "Verified live: `probeSandboxRepoPresent` reads `os.homedir()`, which respects `process.env.HOME`. With HOME set to a fresh temp dir, `~/workspace/deepbook-sandbox` does not exist; the probe returns pass=false with the message containing the exact clone command verbatim: `git clone --recurse-submodules https://github.com/MystenLabs/deepbook-sandbox.git ~/workspace/deepbook-sandbox`. T-158 in `tests/harness.preflight.test.ts` passes live. The round-1 medium about `withSandboxRepoAbsent` being a no-op is technically still true (the harness fixture is a no-op in line 203-205), but the round-1 concern (out-of-bench runners exercising the dev's real repo) is mitigated by the test's `beforeEach` repointing `process.env.HOME` to `tempHome`. AC-2.2 (clone-command remediation) is satisfied. Scenario E-009 step asserting the exact `git clone` command in the failure message is met.",
+    "impact": "Scenario E-009 passes. No remediation needed for the dispatch's required assertion 2.",
+    "recommendation": "Optionally rename `withSandboxRepoAbsent` to a no-op explicit name like `assertSandboxRepoAbsentViaTempHome` for honesty, since its semantics depend entirely on the test's HOME-repointing in `beforeEach`. Not blocking.",
+    "evidence": "Live test output for sandbox-repo-present probe: 'Sandbox repo not found. Clone it with: git clone --recurse-submodules https://github.com/MystenLabs/deepbook-sandbox.git ~/workspace/deepbook-sandbox'. Scenario E-009.",
+    "confidence": "high"
+  },
+  {
+    "id": "R5-003",
+    "title": "E-011 carries forward 'version' word divergence between scenario and production",
+    "severity": "medium",
+    "category": "e2e-flow",
+    "file": "mcp/server/src/probes/suiCli.ts",
+    "line_range": "47-50",
+    "description": "Live verification: with stub returning 'sui 1.62.0', the production message is: `Sui CLI version 1.62.0 is outside the supported range (1.63.2–1.64.1). Run: brew install sui`. The scenario E-011 step in `.forge/e2e/scenarios.json:270` specifies the message should be `Sui CLI 1.62.0 is outside the supported range` — NO 'version' word between 'Sui CLI' and the version literal. Cycle 6 did NOT remove the 'version' word from production; the divergence flagged in round 1 is still present. The dispatch's required assertion 3 only checks the substring `1.62.0 is outside the supported range`, which IS present, but the scenario as authored requires a tighter match. T-160 in harness.preflight.test.ts passes only because it asserts `1.62.0` and `brew install sui` as separate substrings — i.e. the test was weakened from the scenario contract.",
+    "impact": "Two separate readers (scenario author and production code) disagree on the message text. If `cycle-e2e-pass.sh` ever begins matching the full scenario text, E-011 will go red. T-160 currently passes by under-asserting. Scenario document and production code are out of sync, which is the kind of low-grade drift that erodes the e2e suite's value.",
+    "recommendation": "Decide which is canonical and align the other. Two equally cheap options: (a) change `mcp/server/src/probes/suiCli.ts:48` from `Sui CLI version ${versionStr} is outside the supported range` to `Sui CLI ${versionStr} is outside the supported range`; or (b) edit `.forge/e2e/scenarios.json:270` to insert 'version' so it matches production. Option (a) matches the scenario as authored and is more terse.",
+    "evidence": "Production output: 'Sui CLI version 1.62.0 is outside the supported range (1.63.2–1.64.1). Run: brew install sui'. Scenario E-011 step: 'assert preflight probe #4 fails with \"Sui CLI 1.62.0 is outside the supported range\"' (no 'version' word).",
+    "confidence": "high"
+  },
+  {
+    "id": "R5-004",
+    "title": "E-010 production tool's probeOpts plumbing IS correctly wired (H004 partial credit)",
+    "severity": "info",
+    "category": "e2e-flow",
+    "file": "mcp/server/src/tools/runPreflightProbe.ts",
+    "line_range": "20-67",
+    "description": "Verified live: when `runPreflightProbe` is called directly (NOT through the harness MCP transport) with `{ probeId: 'sandbox-manifest-reachable', remediate: true, probeOpts: { 'docker-running': { spawn: dockerStub } } }` where dockerStub returns exitCode=1, the result is: pass=false, warning.kind='preflight-deploy-precondition-failed', warning.probeId='docker-running'. Real spawn is NEVER invoked (verified by `runDeployRemediation` direct test with a fakeSpawnFn that throws if called — it never threw). The production `runPreflightProbe` correctly threads `probeOpts[pid] ?? {}` into both the outer probe call (line 36) and the precondition checker callback (line 58). H004 is correctly implemented at the tool surface. The remaining gap is purely in the harness wiring (R5-001).",
+    "impact": "Test authors who construct probeOpts directly (bypassing the harness) can now reliably drive E-010. The production code path is correct.",
+    "recommendation": "No change needed in production code. See R5-001 for the harness fix.",
+    "evidence": "runPreflightProbe.ts:36 `await runProbe(probeId as ProbeId, probeOpts[probeId as ProbeId] ?? {})` and line 58 `(pid) => runProbe(pid as ProbeId, probeOpts[pid as ProbeId] ?? {})`. Scenario E-010.",
+    "confidence": "high"
+  }
+]

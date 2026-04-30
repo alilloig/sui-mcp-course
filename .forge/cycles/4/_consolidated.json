@@ -1,0 +1,1316 @@
+[
+  {
+    "cluster_id": "C001",
+    "title": "verify.ts re-introduces module-level mutable spawn-test seam (M005 anti-pattern)",
+    "file": "mcp/server/src/verify.ts",
+    "line_ranges": [
+      "36-67",
+      "70-72",
+      "35-67",
+      "35-52"
+    ],
+    "agreement_count": 3,
+    "reviewers": [
+      1,
+      4,
+      6
+    ],
+    "max_severity": "high",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "correctness",
+      "simplicity",
+      "security"
+    ],
+    "recommendations": [
+      "Drop `_verifyOverride` and `setVerifyOverride`. Make verifySpot.ts thread `VerifyOptions` through (e.g. read a harness-installed-only spawn map keyed on projectRoot and pass `{ spawn }` to runVerification), or have `withVerifyStub` install the stub via a per-instance hook on the harness rather than module state. Cycle 5 should treat the verify seam the same way M005 treated the probe seam.",
+      "Either (a) document and validate that `command` must match a strict `\\S+(\\s+\\S+)*` shape (rejecting multi-spaces, tabs, quotes) at validatePhases time, or (b) use a shell-aware splitter (`shell-quote.parse`) or accept `command: string[]` as an alternative shape so callers can pre-split.",
+      "Delete _verifyOverride, setVerifyOverride, and the early-return at runVerification:65-67. Have the harness's withVerifyStub install a VerifySpawnFn into a harness-internal map and route verifySpot calls through a callTool branch that injects opts.spawn (parallel to the runPreflightProbe branch at scripts/e2e/harness.ts:70-89). verifySpot's runVerification(verSpec, projectRoot) call would need to accept and forward the opts argument — one extra parameter, no global state.",
+      "Delete `setVerifyOverride` and `_verifyOverride` from verify.ts (lines 35-67 of the override path). Migrate the harness's `withVerifyStub` fixture to install the stub via `opts.spawn` at the call site (the verify-spot tool would need a thin per-call options pass-through equivalent to the probe pattern), or via a harness-internal map keyed on a probe-id-equivalent. Re-assert A13's intent on the new verification surface."
+    ],
+    "descriptions": [
+      "Cycle 4's A13 explicitly removed the global mutable `setSpawnOverride` Map from preflight.ts in favor of per-call ProbeOptions.spawn injection. verify.ts then introduces an exactly-isomorphic seam (`_verifyOverride` module-level let + `setVerifyOverride` exporter consulted before `opts.spawn` is even checked). The harness's `withVerifyStub` uses this seam because it cannot reach the runVerification call site through the MCP tool boundary. The runVerification call in tools/verifySpot.ts:58 also passes no opts, so the per-call spawn seam is unreachable in production from the tool. The contract intent was 'no module-level test seam in production code'; cycle 4 violates that spirit at the same moment it removed the old one.",
+      "The compile adapter splits the verification command via `adapter.command.split(' ')`. This works for the cycle-4 sole value `'pnpm build'` but breaks on (a) double-space `'pnpm  build'` (yields an empty-string arg), (b) tab-separated args, (c) paths or args with embedded spaces (e.g. `'/Program Files/pnpm build'`), and (d) shell-style quoting. Phases.json schema currently accepts an arbitrary command string — a future path that uses anything richer than `'pnpm build'` will silently produce wrong argv.",
+      "Cycle-4 carry-forward A13/M005 explicitly retired the module-level setSpawnOverride/spawnOverrides Map in preflight.ts in favor of per-call ProbeOptions.spawn injection. verify.ts then re-implements the exact same anti-pattern under a new name: a module-level let _verifyOverride, an exported setVerifyOverride(fn) that mutates it, and runVerification consults the global before doing anything else. The contract-mandated seam is already present in this file (opts?: VerifyOptions with opts.spawn) and verifySpot.ts could pass a stub through it the same way the harness now passes probe stubs through ProbeOptions. The harness's withVerifyStub fixture (scripts/e2e/harness.ts:167) is the only consumer of setVerifyOverride; it could be rewritten to install the stub through a harness-internal map keyed on the tool, exactly mirroring how withDockerStub/withSuiCliStub were rewritten.",
+      "verify.ts exports `setVerifyOverride(fn)` which mutates a module-level `let _verifyOverride: VerifyOverrideFn | undefined`. Any code that imports the production `verify.js` module surface can install a global override that intercepts every subsequent `runVerification` call across the entire process — exactly the global-mutable production-import-surface anti-pattern that A13 (M005 carry-forward) explicitly removed from preflight.ts in this same cycle. The harness comment at scripts/e2e/harness.ts:164-165 even acknowledges the parallel: `the module-level test seam for the compile adapter, parallel to the preflight pattern pre-M005`. The contract specified the spawn-injection seam as `opts.spawn?: SpawnFn` (parallel to ProbeOptions.spawn) — see contract.md line 16: `Spawn injection seam parallels the probe pattern (opts.spawn?: SpawnFn)`. Per-call injection is implemented (verify.ts:74) AND a global override is also exported; only the latter was specified."
+    ],
+    "impacts": [
+      "Same class of test-state contamination the M005 carry-forward was meant to eliminate: an installed override outlives the test that installed it if cleanup is missed (afterEach failure, missed `await harness.shutdown()`, parallel-file leakage). The next caller of runVerification — including production code — silently uses the stub. The correctness invariant 'no global mutable test seam in production' is now reasserted only for the preflight surface, not the verification surface.",
+      "No live failure in cycle 4. Cycle 5+ paths or external curriculum authors writing more complex build commands could see opaque ENOENT or cwd resolution failures that won't be obviously traced to argv mangling.",
+      "The cycle's load-bearing simplicity win — 'no global mutable test seam on the production import surface' — is undone by a parallel global on the very file the new tools depend on. Future contributors will reasonably interpret verify.ts's pattern as endorsed and re-introduce setSpawnOverride-style globals on new modules. The synthesis-notes carry-forward already flags this concern for one of the rejected workers; the chosen winner shipped a cosmetically different but architecturally identical seam.",
+      "Any caller that imports verify.js (test, harness, or — in a hostile scenario — a third-party module loaded into the same process) can hijack ALL subsequent verification dispatches process-wide and either bypass the compile adapter (always return pass) or exfiltrate the spec/projectRoot it receives. The seam is on the production import surface (`export function setVerifyOverride`), not gated behind a test-only build. The same threat model that motivated removing setSpawnOverride from preflight.ts applies here verbatim."
+    ],
+    "evidence": "let _verifyOverride: VerifyOverrideFn | undefined;\n\nexport function setVerifyOverride(fn: VerifyOverrideFn): () => void {\n  _verifyOverride = fn;",
+    "confidence_spread": [
+      "high",
+      "medium"
+    ],
+    "source_ids": [
+      "R1-001",
+      "R1-004",
+      "R4-001",
+      "R6-001"
+    ],
+    "resolved": true,
+    "resolution": "Fixed: removed setVerifyOverride / _verifyOverride from verify.ts (deleted ~15 LOC). Added per-call opts.spawn parameter to runVerifySpot. Harness withVerifyStub now intercepts callTool('verifySpot') at the harness boundary, builds a stub VerifySpawnFn from the {pass, output} args, and threads it through runVerifySpot's opts. Production verify.ts has zero module-level test seam. T-260 grep clean. T-283 cold-start E-001 still passes (cursor advancement preserved by reusing runVerifySpot). All 113 cycle-4 tests + cycles 1-3 baseline pass."
+  },
+  {
+    "cluster_id": "C002",
+    "title": "verify.ts global mutable _verifyOverride re-introduces the M005 anti-pattern A13 just retired",
+    "file": "mcp/server/src/verify.ts",
+    "line_ranges": [
+      "35-67",
+      "43-52",
+      "35-52"
+    ],
+    "agreement_count": 3,
+    "reviewers": [
+      2,
+      3,
+      5
+    ],
+    "max_severity": "high",
+    "min_severity": "medium",
+    "disputed_severity": false,
+    "categories": [
+      "design",
+      "error-handling",
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "Drop _verifyOverride / setVerifyOverride. Have withVerifyStub install the stub through the same harness-internal map pattern preflight uses (key on something stable like 'compile' or just pass through verifyOptions at the harness's verifySpot wrapper boundary), and route the stub via runVerification(opts.spawn) — the existing opts.spawn branch already handles synthetic results when the spawn fn returns { status: 0, ... }. Or: thread VerifyOptions through verifySpot's tool entry so the harness can pass opts at call time, parallel to how runProbe already takes ProbeOptions.",
+      "Replace _verifyOverride with the per-call seam already present in runVerification's signature: opts.spawn already accepts a VerifySpawnFn. Extend VerifyOptions with an optional `override?: VerifyOverrideFn` and have verifySpot.ts plumb it through, or have the harness inject the stub via a tool-level wrapper rather than a module-level setter. Same architecture as preflight A13.",
+      "Drop _verifyOverride / setVerifyOverride. Have the harness's withVerifyStub install a SpawnFn that returns predictable stdout/stderr (or wrap verifySpot via a per-call opts.spawn pass-through), matching the cycle-4 contract's spawn-injection-only seam."
+    ],
+    "descriptions": [
+      "Cycle 4 explicitly killed the module-level setSpawnOverride/spawnOverrides Map in preflight.ts (A13, M005 carry-forward) in favor of per-call ProbeOptions.spawn injection. verify.ts then introduces the exact same anti-pattern in production code: a module-level let _verifyOverride and an exported setVerifyOverride() that the harness installs at boot. The contract specified the verify module should follow the probe pattern ('Spawn injection seam parallels the probe pattern (opts.spawn?: SpawnFn)'), and runVerification already accepts opts.spawn. The override branch sits in front of the spawn-injection branch and silently shadows it, so callers passing opts.spawn while a stub is installed get the stub instead. This is the very design seam A13 was about — moved one file over.",
+      "Cycle 4 A13 explicitly retires preflight.ts's setSpawnOverride / module-level spawnOverrides Map as the 'global-mutable test seam' anti-pattern (cycle-3 carry-forward M005/R2-003). verify.ts then introduces an identical pattern: a module-level `let _verifyOverride` plus an exported `setVerifyOverride` setter, used by the harness's withVerifyStub fixture. The cleanup callback only resets if the still-current override matches (`if (_verifyOverride === fn)`), so a second concurrent test that installs its own stub before the first cleanup runs will leave the original override leaked across tests. There is no try/finally guarantee at the harness level either — if a test throws between install and cleanup, the override persists into the next test.",
+      "Cycle 4 explicitly retired preflight.ts's setSpawnOverride + module-level Map (carry-forward M005 / R2-003) in favor of per-call ProbeOptions.spawn injection. The new verify.ts ships a new module-level `let _verifyOverride: VerifyOverrideFn | undefined` plus an exported `setVerifyOverride()` that mutates it — exactly the pattern M005 condemned. The contract specified that 'Spawn injection seam parallels the probe pattern (opts.spawn?: SpawnFn) so tests stub the build without invoking the real pnpm.' The implementation honors that with `opts?.spawn` AND adds a parallel global seam the contract did not authorize."
+    ],
+    "impacts": [
+      "Inconsistent design across verify.ts vs preflight.ts; reviewers/auditors must track two distinct test-seam patterns; the production import surface still leaks a global-mutable test hook (the synthesis-notes flagged this as carry-forward 'A13 intent partially met by renaming'); cycle 5 is set to add 3 more verification adapters, each of which would be expected to follow whichever pattern is canonical, and right now the canonical answer is contradictory.",
+      "Test isolation breaks: a verify stub installed by one test can bleed into the next test if the test body throws or the cleanup is missed. This is exactly the failure mode A13 was written to prevent. Worse, cycle-5 work that touches verify.ts will see the seam as a sanctioned production pattern and propagate it. Reviewers verifying A13 by greping for setSpawnOverride miss this functionally identical seam under a different name.",
+      "Cycle 5+ tests can mutate verification globally between tests, creating cross-test pollution and parallel-run hazards — the same class of bug M005 was filed to eliminate. Reviewer dimension `simplicity` may also flag the duplication."
+    ],
+    "evidence": "let _verifyOverride: VerifyOverrideFn | undefined;\n\nexport function setVerifyOverride(fn: VerifyOverrideFn): () => void {\n  _verifyOverride = fn;\n  return () => {\n    if (_verifyOverride === fn) {\n      _verifyOverride = undefined;\n    }\n  };\n}",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R2-001",
+      "R3-003",
+      "R5-002"
+    ],
+    "resolved": true,
+    "resolution": "Co-resolved with C001 (duplicate cluster from cycle-consolidate.mjs)."
+  },
+  {
+    "cluster_id": "C006",
+    "title": "RegistryWarning union carries 11 kinds vs 8 specified, with three semantic-alias zombies",
+    "file": "mcp/server/src/warnings.ts",
+    "line_ranges": [
+      "7-18"
+    ],
+    "agreement_count": 3,
+    "reviewers": [
+      1,
+      2,
+      4
+    ],
+    "max_severity": "high",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "correctness",
+      "design",
+      "simplicity"
+    ],
+    "recommendations": [
+      "Drop `paths-missing`, `paths-empty`, and `path-malformed` from RegistryWarning. If a consumer was relying on the alias kinds (none in cycle 4 source), update the consumer to use the canonical kind.",
+      "Drop the three alias members from RegistryWarning. Update tests/preflight.test.ts (lines 529-531, 569; tests/registry.test.ts lines 206, 577) — those are filesystem-fixture path strings (`fixtures/paths-empty`), not kind literals; the test's grep was matching directory names, not warning kinds. If the test genuinely asserts those literals as union members, the test is wrong (tests should track the contract, not the implementation's accidental over-inclusion).",
+      "Pick one: (a) drop the three alias members from the union and update T-171's expectedKinds to the canonical eight, OR (b) document the aliasing as a wire-compat layer with a single comment line and add a test that asserts no registry.ts code path produces the alias kinds. Option (a) is the simpler choice and matches the contract's letter."
+    ],
+    "descriptions": [
+      "Contract A12 specifies `RegistryWarning` is a discriminated union of exactly the eight kinds registry.ts emits. The implementation declares 11 members: the 8 required kinds plus `paths-missing`, `paths-empty`, and `path-malformed` (semantic aliases of three of the eight). registry.ts emits none of these alias kinds — grep across the codebase confirms zero producers. T-254 only verifies the 8 required kinds are present, not that the union is closed at exactly 8.",
+      "Contract A12 mandates RegistryWarning be a true discriminated union of EXACTLY the eight kinds registry.ts emits ('no-paths-dir', 'empty-paths-dir', 'missing-path-json', 'malformed-path-json', 'invalid-path-json', 'missing-phases-json', 'malformed-phases-json', 'invalid-phases-json'). The shipped union has 11 members — three additional 'semantic alias' kinds ('paths-missing', 'paths-empty', 'path-malformed') exist purely to keep cycle-3-era preflight.test.ts strings green. registry.ts emits ZERO of those three. This is the same shape (orphan members the producer never emits) that cycle 3 R1-003/R2-001/M002 flagged on the prior loose '{kind:string}' shape — only now those orphans are encoded as named literal members rather than uninhabited interfaces. Narrowing on `if (w.kind === 'paths-missing')` infers a non-empty type from the producer's perspective, which is wrong.",
+      "Contract A12 prescribes exactly eight RegistryWarning kinds matching what registry.ts emits: no-paths-dir, empty-paths-dir, missing-path-json, malformed-path-json, invalid-path-json, missing-phases-json, malformed-phases-json, invalid-phases-json. The shipped union has 11 members because three semantic-alias kinds — paths-missing, paths-empty, path-malformed — are kept around 'for tests' (per the comment at warnings.ts:6). registry.ts never emits any of those three; grep confirms zero producers. They exist solely so tests/preflight.test.ts:528-531 (T-171) keeps matching the substring against warnings.ts source bytes. This is a textbook tautology: the test asserts a literal string is in the file, the source carries the string for no other reason, and a reader has to chase the comment chain to discover that 3 of the 11 union members are unreachable at runtime. A future grep for w.kind === 'paths-missing' will find the type but never a producer, and the consumer will silently never branch."
+    ],
+    "impacts": [
+      "Consumers of the discriminated union can match `kind === 'paths-missing'` and TypeScript will accept the narrowing — but the branch is dead code at runtime because nothing emits it. This is the inverse of the cycle-3 R1-003 / R2-001 carry-forward (loose `kind: string`): the type is now lying about what wire kinds can appear. Future maintainers reading the union must trace registry.ts to know which kinds are reachable.",
+      "The discriminated-union promise (caller can narrow to known producer outputs) is undermined: code branching on 'paths-missing' will TS-typecheck but is dead at runtime; future contributors who see `paths-missing` in the union will assume registry.ts can emit it; the carry-forward debt M002 is technically still open. The synthesis-notes flagged this in worker comparison ('worker-6 over-built EngineWarning (19 kinds vs 16 specified)') but the chosen worker still over-built by 3.",
+      "Type-narrowing cost: any switch over RegistryWarning.kind has 3 dead arms; exhaustiveness checks pass but read as legitimate handling. The contract's 'true discriminated union' invariant is partially undermined — it's still discriminated, but it covers more cases than registry.ts can produce, defeating one purpose of the tightening (signal the exact wire surface). Either the test should be amended to grep for the canonical eight kinds, or registry.ts should emit the alias kinds (it currently doesn't)."
+    ],
+    "evidence": "  | { kind: 'no-paths-dir'; message: string; path?: string; dir?: string }\\n  | { kind: 'paths-missing'; message: string; path?: string; dir?: string }\\n  | { kind: 'empty-paths-dir'; message: string; path?: string; dir?: string }\\n  | { kind: 'paths-empty'; message: string; path?: string; dir?: string }",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R1-002",
+      "R2-002",
+      "R4-002"
+    ],
+    "resolved": true,
+    "resolution": "Fixed: removed three orphan RegistryWarning union members (paths-missing, paths-empty, path-malformed) from warnings.ts. Union now has exactly the 8 kinds registry.ts emits, matching A12 contract intent. T-171 still passes."
+  },
+  {
+    "cluster_id": "C017",
+    "title": "advanceCursor uses string sentinels '__done__' for done-marker — leaks into state.cursor on disk",
+    "file": "mcp/server/src/phaseEngine.ts",
+    "line_ranges": [
+      "103-112"
+    ],
+    "agreement_count": 2,
+    "reviewers": [
+      2,
+      4
+    ],
+    "max_severity": "medium",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "design",
+      "simplicity"
+    ],
+    "recommendations": [
+      "Add an explicit `done: boolean` to State (or change cursor to `Cursor | null`). advanceCursor returns `{ ...state, cursor: null, done: true }` past the last spot. validateState normalizes cursor.phase_id/spot_id non-empty when cursor is non-null. getCurrentSpot reads `state.done` first. Schema bump can wait for cycle 5 (when other State fields evolve), but at minimum reserve the field name and document the sentinel until then.",
+      "Either widen Cursor to { phase_id: string; spot_id: string } | { done: true } (the cleanest), or add a top-level state.completed: boolean flag, or document the sentinel as a SENTINEL_DONE_ID constant exported from phaseEngine.ts and reused by all readers. The discriminated-union approach mirrors the LoadStateResult pattern already established in state.ts."
+    ],
+    "descriptions": [
+      "When the cursor walks past the last spot, advanceCursor sets `cursor: { phase_id: '__done__', spot_id: '__done__' }` and relies on getCurrentSpot's missing-id branch to return `{ done: true }`. Then verifySpot.ts:62-64 calls saveState with this sentinel state, persisting `'__done__'` strings to the on-disk state.json. Three problems: (1) the sentinel is colocated with real cursor data — a malicious or buggy phases.json that names a phase '__done__' silently advances the cursor; (2) the State schema (state.ts) treats cursor.{phase_id, spot_id} as plain strings, so a future schema-validate pass cannot distinguish 'cursor is done' from 'cursor was never set'; (3) the only signal of done-ness is the absence of a matching phase id in the manifest, which means renaming a phase between cycles silently re-activates a previously-completed cursor.",
+      "When the cursor advances past the last spot of the last phase, advanceCursor writes the literal '__done__' into both phase_id and spot_id and relies on getCurrentSpot's .find() returning undefined to interpret that as 'done'. This couples the type State.cursor (always {phase_id: string, spot_id: string}) to a magic-string sentinel that exists nowhere in the schema, isn't documented anywhere except a comment, and would silently misbehave if a future curriculum author named a phase '__done__'. The natural representation — make Cursor a discriminated union with a {kind: 'done'} arm, or make phase_id/spot_id optional — is one or two lines longer in the type but eliminates the sentinel and the implicit contract that getCurrentSpot is the only valid reader."
+    ],
+    "impacts": [
+      "On-disk state file contains opaque sentinels surfacing in any debug log, support bundle, or future migration tool. Cross-cycle resumption logic (cycle 5+) must learn the sentinel convention. A colliding phase id is a low-probability footgun but the cost of a structured marker (e.g., `cursor: null` or a separate `state.done: boolean`) is one schema bump and trivial validator-side normalization.",
+      "Behavioural fragility (a path with id '__done__' would loop forever) and a coupling between two functions through a magic string with no compiler enforcement. Future cycles adding 'jump to phase' or 'rewind' will need to know the sentinel exists and propagate it correctly."
+    ],
+    "evidence": "  } else {\\n    // Past the last spot of the last phase — use a sentinel that getCurrentSpot won't find\\n    newPhaseId = '__done__';\\n    newSpotId = '__done__';\\n  }",
+    "confidence_spread": [
+      "high",
+      "medium"
+    ],
+    "source_ids": [
+      "R2-007",
+      "R4-005"
+    ]
+  },
+  {
+    "cluster_id": "C009",
+    "title": "saveState rejection in verifySpot/selectPath/setPersonalization surfaces as unhandled MCP transport error",
+    "file": "mcp/server/src/tools/verifySpot.ts",
+    "line_ranges": [
+      "58",
+      "60-64"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      3
+    ],
+    "max_severity": "medium",
+    "min_severity": "medium",
+    "disputed_severity": false,
+    "categories": [
+      "error-handling"
+    ],
+    "recommendations": [
+      "Extend runVerifySpot's input shape with an optional `opts?: VerifyOptions` parameter and forward it: `await runVerification(verSpec, projectRoot, opts)`. Default to no opts when called from MCP, but expose for the harness.",
+      "Wrap saveState in try/catch in all three tools. For verifySpot, return `{ pass: true, advanced: false, output: ..., error: 'verification passed but state persist failed: <msg>' }` so the skill can show progress without losing the failure. For selectPath/setPersonalization return `{ ok: false, errors: [...] }`."
+    ],
+    "descriptions": [
+      "verifySpot.ts calls `await runVerification(verSpec, projectRoot)` with no opts argument. The per-call opts.spawn seam in verify.ts (lines 74-85) is therefore unreachable from production tool callers — only the module-level _verifyOverride works. This forces tests to rely on the global-mutable seam (R3-003) rather than per-call injection, defeating the architectural cleanup A13 demands. It also means a future caller that wants to apply a spawn timeout (cycle 5 concern) has no API path to do so without editing verifySpot.ts.",
+      "verifySpot.ts:62-63 calls `await saveState(projectRoot, advancedState)` with no try/catch. Same pattern in selectPath.ts:129 and setPersonalization.ts:104. If saveState rejects (ENOSPC, EACCES, EBUSY on Windows, transient antivirus lock), the tool function rejects with the raw fs error. The MCP server harness then turns that into the cryptic 'MCP error ...' text the green log shows at red.log:74-77 (`Unexpected token 'M', \"MCP error \"... is not valid JSON`). The skill cannot interpret it and cannot recover. Worse: in verifySpot the user just saw `pass: true` from runVerification but the cursor never advanced, leaving the engine in an inconsistent client-perceives-success / server-cursor-not-moved state with no signal."
+    ],
+    "impacts": [
+      "The opts.spawn parameter becomes dead production code. Any test that wants to verify spawn-error fallback (verify.ts lines 87-100) without polluting global state must use _verifyOverride, which is the wrong seam. Cycle 5's timeout work will need to plumb opts through verifySpot anyway.",
+      "User-visible: cryptic transport error instead of a structured `{ pass:true, advanced:false, error: 'failed to persist cursor advance' }` response. The skill's lesson loop has no recovery path. In verifySpot's pass branch this is the worst case — verification ran (potentially against a real `pnpm build`), the user 'passed', but the next nextSpot call returns the same spot with no explanation."
+    ],
+    "evidence": "  if (verResult.pass) {\n    // Advance cursor\n    const advancedState = advanceCursor(state, phasesData);\n    await saveState(projectRoot, advancedState);\n    return { pass: true, output: verResult.output, advanced: true };\n  }",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R3-004",
+      "R3-005"
+    ]
+  },
+  {
+    "cluster_id": "C011",
+    "title": "buildPrompts/declaredOptions logic duplicated across selectPath and setPersonalization",
+    "file": "mcp/server/src/tools/selectPath.ts",
+    "line_ranges": [
+      "24-54"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      2
+    ],
+    "max_severity": "medium",
+    "min_severity": "medium",
+    "disputed_severity": false,
+    "categories": [
+      "design"
+    ],
+    "recommendations": [
+      "Extract a single `buildDeclaredOptions(pathData) → PersonalizationOptionDecl[]` in personalization.ts (or a new tools/_pathOptions.ts helper). selectPath maps DeclaredOptionDecl → Prompt for the wire shape; setPersonalization passes the array straight to validatePersonalizationValues. Single source of truth for option metadata; new options need exactly one site edit."
+    ],
+    "descriptions": [
+      "selectPath.ts:24-54 (buildPrompts) and setPersonalization.ts:54-79 (declaredOptions construction) implement the same loop: iterate pathData.personalization_options, branch on 'poll_interval_ms' vs 'pool_subset', fall back to identical hardcoded defaults ({min:1000,max:30000,default:3000} and {values:['both','DEEP_SUI','SUI_USDC'],default:'both'}). The two implementations differ only in the output type (Prompt vs PersonalizationOptionDecl), but the shapes overlap nearly entirely (both have name/type/range/enum/default). When cycle 5+ adds a third personalization option the maintainer must remember to edit both files, and either's drift (e.g. a min/max change in one but not the other) introduces a hard-to-spot bug where validate accepts what selectPath rejects (or vice versa)."
+    ],
+    "impacts": [
+      "Drift hazard between the prompt the skill renders and the validator's acceptance set. Adds ~50 LOC of redundancy in scope of contract that called this out as design-sensitive (contract: 'reviewers will grep for any other consumer touching target_file/target_range'). Maintenance multiplier per new personalization option = 2."
+    ],
+    "evidence": "for (const opt of pathData.personalization_options) {\\n    if (opt === 'poll_interval_ms') {\\n      const range = pathData.personalization_ranges?.poll_interval_ms ?? {\\n        min: 1000,\\n        max: 30000,\\n        default: 3000,\\n      };",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R2-003"
+    ]
+  },
+  {
+    "cluster_id": "C015",
+    "title": "Personalization range construction duplicated across selectPath and setPersonalization",
+    "file": "mcp/server/src/tools/setPersonalization.ts",
+    "line_ranges": [
+      "53-79"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      4
+    ],
+    "max_severity": "medium",
+    "min_severity": "medium",
+    "disputed_severity": false,
+    "categories": [
+      "simplicity"
+    ],
+    "recommendations": [
+      "Extract a single buildDeclaredOptions(pathData: PathData): PersonalizationOptionDecl[] helper (in personalization.ts, alongside validatePersonalizationValues, since it's the inverse of the validation it feeds). selectPath.buildPrompts and setPersonalization both call it. Move the literal fallbacks into one DEFAULT_PERSONALIZATION_RANGES constant — or, better, drop the fallbacks entirely and rely on path.json's required ranges (the schema currently allows them to be absent; tightening the schema removes a phantom code path)."
+    ],
+    "descriptions": [
+      "selectPath.ts:24-54 (buildPrompts) and setPersonalization.ts:53-79 (the inline declaredOptions construction) walk pathData.personalization_options identically: same string discrimination on 'poll_interval_ms' / 'pool_subset', same fallback ranges (min: 1000, max: 30000, default: 3000) and (values: ['both', 'DEEP_SUI', 'SUI_USDC'], default: 'both'), same shape produced. Any future personalization key (the spec contemplates 'render_style') requires editing both files in parallel. The hard-coded fallbacks also duplicate path.json's declared block and the schema constants — three copies of the same magic numbers and three copies of the same enum array."
+    ],
+    "impacts": [
+      "Drift hazard: a contributor updating the default poll interval in path.json would still see their app respect 3000 because both tool files carry the same fallback. A new personalization option requires three coordinated edits (selectPath, setPersonalization, schemas/path.ts) when one would suffice. This is exactly the kind of N×M coupling cycle 3 carry-forward R4-004 was filed about for defaultSpawn."
+    ],
+    "evidence": "const declaredOptions: PersonalizationOptionDecl[] = [];\n  for (const opt of pathData.personalization_options) {\n    if (opt === 'poll_interval_ms') {\n      const range = pathData.personalization_ranges?.poll_interval_ms ?? {\n        min: 1000,\n        max: 30000,\n        default: 3000,\n      };",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R4-003"
+    ]
+  },
+  {
+    "cluster_id": "C016",
+    "title": "validatePhases dual-mode (stub vs full) softens contract A2's tightening",
+    "file": "mcp/server/src/schemas/phases.ts",
+    "line_ranges": [
+      "180-243"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      2
+    ],
+    "max_severity": "medium",
+    "min_severity": "medium",
+    "disputed_severity": false,
+    "categories": [
+      "design"
+    ],
+    "recommendations": [
+      "Either (a) actually require all four fields per the contract, and migrate phases 2/3 placeholders to full spots with a sentinel verification.command (e.g., `echo TBD; exit 1`), or (b) introduce an explicit `placeholder: true` flag on the spot that the schema and runtime guards both consult, so the two-mode reality is encoded in the data instead of inferred from field presence. Today's 'hasAnyNewField' inference is brittle — adding a fifth optional field (e.g. cycle-5 doc_link inline content) means the placeholder/full boundary moves."
+    ],
+    "descriptions": [
+      "Contract A2 says 'Tighten validatePhases so each spot must declare target_file/target_range/prompt/verification...' . The shipped validator detects whether a spot has 'any' of those fields (hasAnyNewField) and only enforces all-four when one is present; otherwise it silently accepts a stub spot with just `{id, title?}`. This bifurcates the schema into two implicit modes that callers have to know about: nextSpot has its own runtime guard (lines 84-91) re-checking the four fields and emits 'Spot is a stub spot (incomplete fields); cannot render', because the schema let it through. The synthesis-notes called out worker-3's dual-validation split as 'an interesting design decision' that worker-4 chose otherwise — but worker-4 actually shipped a different dual mode (one validator, two acceptance sets). The placeholder phases 2/3 in 01-orderbook-viewer/phases.json could equally well have been authored as full-spec spots with `verification.mode: 'compile'` + a sentinel command + a 'TBD in cycle 5' prompt — exactly what the contract's 'placeholder' language implied."
+    ],
+    "impacts": [
+      "Schema is no longer a strong invariant: a manifest can ship a spot that the engine cannot serve, and the failure surfaces only at nextSpot/verifySpot call time as a runtime error string instead of a registry-scan-time validation warning (defeating part of the cycle-3 R&R purpose of having registry vouch for both files together — registry.ts:106-142 calls validatePhases but the validator passes manifests the engine itself rejects). Cycle 5 will add the missing phase-2/3 spots and may forget to re-tighten, leaving a permanent 'stub allowed' loophole."
+    ],
+    "evidence": "      const hasAnyNewField =\\n        s['target_file'] !== undefined ||\\n        s['target_range'] !== undefined ||\\n        s['prompt'] !== undefined ||\\n        s['verification'] !== undefined;",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R2-005"
+    ]
+  },
+  {
+    "cluster_id": "C022",
+    "title": "validatePersonalizationValues throws on null/non-object values input",
+    "file": "mcp/server/src/personalization.ts",
+    "line_ranges": [
+      "66-79"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      3
+    ],
+    "max_severity": "medium",
+    "min_severity": "medium",
+    "disputed_severity": false,
+    "categories": [
+      "error-handling"
+    ],
+    "recommendations": [
+      "At the top of setPersonalization.ts, guard with `if (typeof values !== 'object' || values === null || Array.isArray(values)) return { ok: false, errors: ['values must be an object'] };` before calling validatePersonalizationValues. Belt-and-suspenders: add the same guard inside validatePersonalizationValues so direct callers are safe."
+    ],
+    "descriptions": [
+      "validatePersonalizationValues' first action is `for (const key of Object.keys(values))`. If the MCP client sends `values: null` (which is JSON-valid and crosses the wire intact), `Object.keys(null)` throws TypeError synchronously. setPersonalization.ts:82 calls this with no input guard — the typed signature `Record<string, unknown>` is a compile-time fiction across the MCP boundary. Same hazard if values is an array, a primitive, or undefined."
+    ],
+    "impacts": [
+      "Sending `setPersonalization({ values: null })` rejects with a synchronous TypeError that propagates as a transport error rather than the expected `{ ok: false, errors: [...] }`. Same as R3-005 the skill sees an opaque MCP error instead of a structured rejection. Trivially exploitable by a malformed client."
+    ],
+    "evidence": "  // Validate the submitted values\n  const validationResult = validatePersonalizationValues(values, declaredOptions);",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R3-006"
+    ]
+  },
+  {
+    "cluster_id": "C025",
+    "title": "saveState close() error swallows original sync() error",
+    "file": "mcp/server/src/state.ts",
+    "line_ranges": [
+      "145-150",
+      "137-153"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      3
+    ],
+    "max_severity": "medium",
+    "min_severity": "medium",
+    "disputed_severity": false,
+    "categories": [
+      "error-handling"
+    ],
+    "recommendations": [
+      "Capture the sync error explicitly: let syncErr; try { await handle.sync(); } catch (e) { syncErr = e; } finally { try { await handle.close(); } catch (closeErr) { if (!syncErr) syncErr = closeErr; } } if (syncErr) throw syncErr;",
+      "Wrap the open→sync→close→rename block in try/catch and unlink(tmpPath).catch(()=>{}) on any failure before re-throwing, so tmp files don't accumulate on persistent errors."
+    ],
+    "descriptions": [
+      "The durability sequence uses try{ sync } finally { close }. If handle.sync() rejects (the load-bearing durability op), the await handle.close() in the finally block runs unconditionally and, if it also rejects (e.g. EBADF after a sync error invalidated the handle), the close() error replaces the sync() error. The caller sees the close error and never learns the durability flush failed.",
+      "writeFile(tmpPath) → open → sync → close → rename. If sync(), close(), or rename() rejects, the tmp file `state.tmp-<ts>-<rand>.json` remains in `.sui-deepbook-course/`. There is no unlink-on-failure cleanup. The wx flag on writeFile prevents collisions per call (random suffix), but every failed save accumulates an orphan tmp file."
+    ],
+    "impacts": [
+      "On real disk pressure (ENOSPC, I/O error during sync), the diagnostic path surfaces a misleading 'close failed' error instead of the actual sync failure. Cycle-2's durability invariant claims the canonical state was either fully synced or absent — when this code path fires it can leave the tmp file on disk while reporting a confusing close-time error, and the operator can't tell which operation actually failed.",
+      "Repeated transient saveState failures (e.g. flaky disk, antivirus quarantine on Windows, cross-device EXDEV on rename) silently litter the state directory. On a constrained filesystem this can fill the .sui-deepbook-course/ directory with orphans the user never sees. Also leaks the sensitive 0o600 state contents in tmp form indefinitely."
+    ],
+    "evidence": "  await fsPromises.writeFile(tmpPath, bytes, { flag: 'wx', mode: 0o600 });\n\n  // A18: durably flush via the FileHandle returned by fsPromises.open.\n  // M001 carry-forward (cycle 4): handle.sync() + handle.close() only;\n  // the legacy fs-level sync call is removed.\n  const handle = await fsPromises.open(tmpPath, 'r+');\n  try {\n    await handle.sync();\n  } finally {\n    await handle.close();\n  }\n\n  // Atomic rename tmp → canonical\n  await fsPromises.rename(tmpPath, statePath);",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R3-001",
+      "R3-002"
+    ]
+  },
+  {
+    "cluster_id": "C028",
+    "title": "T-286 spawn-zero assertion is tautological under setVerifyOverride",
+    "file": "tests/harness.lesson.test.ts",
+    "line_ranges": [
+      "406-442"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      5
+    ],
+    "max_severity": "medium",
+    "min_severity": "medium",
+    "disputed_severity": false,
+    "categories": [
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "Either (a) drop the override seam from verify.ts entirely and have the harness wire verifySpot through opts.spawn (mirroring the M005 carry-forward), so T-286's assertion exercises the real adapter; or (b) split T-286 into two cases: one with override active (current), one with NO override + a no-op opts.spawn that records but never calls real spawn — the latter would catch spawn-leakage past the seam."
+    ],
+    "descriptions": [
+      "T-286 claims to verify that withVerifyStub keeps verifySpot from spawning a subprocess. The harness's withVerifyStub installs a module-level override (setVerifyOverride) that short-circuits runVerification's first branch BEFORE the compile adapter's spawn site (verify.ts:65-67). With the override active, the compile branch (verify.ts:69-101) is unreachable, so 'spawn was not called' is trivially satisfied — any override fn returning early would pass. The test does not actually exercise verify.ts's compile path; it exercises only the override seam. The genuine 'compile path does not spawn when stubbed via opts.spawn' invariant is not tested because the harness uses a different (global) seam."
+    ],
+    "impacts": [
+      "If a future refactor moves the compile spawn site BEFORE the override check, T-286 still passes silently. The test was promoted to a regression after the cycle-4 amendment but does not regress what its name claims."
+    ],
+    "evidence": "if (_verifyOverride !== undefined) {\n    return _verifyOverride(adapter, projectRoot);\n  }",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R5-001"
+    ]
+  },
+  {
+    "cluster_id": "C029",
+    "title": "T-224 SHA-256 baseline only runs on the author's machine; CI silently skips byte-equality",
+    "file": "tests/phaseEngine.test.ts",
+    "line_ranges": [
+      "622-636"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      5
+    ],
+    "max_severity": "medium",
+    "min_severity": "medium",
+    "disputed_severity": false,
+    "categories": [
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "Compare the bundled file's SHA-256 against REFERENCE_APP_TSX_SHA256_AT_AUTHOR unconditionally (the constant IS the cross-machine ground truth — the contract calls it 'the author's recorded hash'). Use the source-existence skip ONLY for the second 'sanity check the source on this machine' branch, not the bundled-vs-recorded check."
+    ],
+    "descriptions": [
+      "T-224 uses `it.skipIf(!fs.existsSync(REFERENCE_SOURCE))` where REFERENCE_SOURCE is `~/workspace/deepbook-sandbox-evaluation-apps/01-orderbook-viewer/src/App.tsx`. On any machine without that checkout (CI, fresh dev clones, the reviewer's box), T-224 silently skips. The fallback T-225 only asserts existence + size > 0, which a one-byte file passes. The 'byte-for-byte snapshot' invariant from contract A9 is therefore unverifiable in CI — only the author can ever fail this test. The pre-computed REFERENCE_APP_TSX_SHA256_AT_AUTHOR constant exists but is never compared against the bundled file when the source is absent."
+    ],
+    "impacts": [
+      "Silent drift between paths/01-orderbook-viewer/reference/App.tsx and the upstream source-of-truth ships unnoticed. The test is a no-op in CI."
+    ],
+    "evidence": "it.skipIf(!fs.existsSync(REFERENCE_SOURCE))(\n    'T-224: reference/App.tsx is byte-for-byte equal ...",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R5-003"
+    ]
+  },
+  {
+    "cluster_id": "C007",
+    "title": "verifySpot has no defensive handler for VerificationModeUnsupportedError",
+    "file": "mcp/server/src/tools/verifySpot.ts",
+    "line_ranges": [
+      "58-68",
+      "56-58"
+    ],
+    "agreement_count": 2,
+    "reviewers": [
+      1,
+      3
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "correctness",
+      "error-handling"
+    ],
+    "recommendations": [
+      "Wrap the runVerification call in try/catch and convert VerificationModeUnsupportedError into a structured `{ pass: false, error: 'Verification mode <m> not yet supported' }` consistent with the surrounding error paths.",
+      "Wrap `await runVerification(verSpec, projectRoot)` in try/catch. On VerificationModeUnsupportedError, return `{ pass: false, error: 'verification-mode-unsupported: ' + err.mode }` and emit the corresponding warning. Keep generic Error rethrowing if you want crashes to surface — but this specific error is part of the contract's typed surface and should not crash the tool."
+    ],
+    "descriptions": [
+      "The `runVerification(verSpec, projectRoot)` call at verifySpot.ts:58 has no try/catch. For cycle 4 all live spots in `paths/01-orderbook-viewer/phases.json` declare `verification.mode: 'compile'`, so the unsupported branches in verify.ts (test / simulate / custom) cannot fire. As soon as cycle 5+ adds a phase 2 / 3 spot with a non-compile verification mode before its adapter is wired, calling verifySpot at that cursor throws the error past the tool handler. The MCP tool wrapper in index.ts has no surrounding try, so the SDK turns the rejection into a generic transport error — losing the structured `mode` field and the recovery signal.",
+      "If a spot's verification.mode is 'test', 'simulate', or 'custom', runVerification throws VerificationModeUnsupportedError (verify.ts:103-113). verifySpot.ts does not catch this — the rejection propagates to the MCP transport and surfaces as the same opaque 'MCP error ...' text seen in red.log:74. The contract notes phase 2/3 placeholders all use mode:'compile' in cycle 4, but the schema (phases.ts:72) accepts all four modes, so a hand-edited or future fixture can produce this error path. The contract A12 even introduces a warning kind `verification-mode-unsupported` for exactly this case — but the code path that should emit it is missing."
+    ],
+    "impacts": [
+      "Forward-looking only; not exercised in cycle 4. When cycle 5 introduces test/simulate/custom verifications, the rollout will fail loudly rather than degrading. Other tool surfaces (loadPhases, loadState) all return structured errors via the same handler shape — verifySpot is the outlier.",
+      "A phases.json with `mode: 'test'` (entirely schema-valid in cycle 4) crashes verifySpot via an unhandled rejection rather than returning `{ pass: false, error: 'mode test not yet supported' }`. The structured `verification-mode-unsupported` warning kind defined in warnings.ts is dead code."
+    ],
+    "evidence": "  const verSpec = (spot.verification as unknown) as VerificationSpec;\n\n  const verResult = await runVerification(verSpec, projectRoot);",
+    "confidence_spread": [
+      "medium",
+      "high"
+    ],
+    "source_ids": [
+      "R1-003",
+      "R3-010"
+    ]
+  },
+  {
+    "cluster_id": "C008",
+    "title": "verifySpot's verification cast through `as unknown as VerificationSpec` papers over a type seam",
+    "file": "mcp/server/src/tools/verifySpot.ts",
+    "line_ranges": [
+      "49-58",
+      "54-58"
+    ],
+    "agreement_count": 2,
+    "reviewers": [
+      2,
+      4
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "design",
+      "simplicity"
+    ],
+    "recommendations": [
+      "If R2-005 lands and SpotData's full-spot mode is enforced, this cast disappears: the runtime check `if (spot.verification === undefined)` against a non-optional SpotData['verification']: VerificationSpec becomes a no-op TS recognises. Short-term fix without R2-005: introduce a type guard `function isFullSpot(s: SpotData): s is Required<Pick<SpotData,'target_file'|'target_range'|'prompt'|'verification'>> & SpotData` so the narrow happens in the type system.",
+      "Replace the cast with a plain assignment: `const verSpec = spot.verification;`. If TS still complains (because the narrowing was lost on destructure), restructure to `if (current.spot.verification === undefined) { ... }; const verSpec = current.spot.verification;` — same lines, no cast. Remove the 'cast through unknown' explanatory comment along with it."
+    ],
+    "descriptions": [
+      "verifySpot does `const verSpec = (spot.verification as unknown) as VerificationSpec;` after a runtime undefined check. The double-cast through unknown is the TS-strict idiom for forcing a coercion the compiler refuses, which here is needed only because SpotData declares `verification?: VerificationSpec` (optional, R2-005). The runtime guard at line 50 narrows `spot.verification !== undefined` but the local binding `spot` is typed as SpotData with verification still optional — so TS rightly complains. The cast is benign at runtime but tells the next maintainer 'I know better than the type system' which is exactly backwards: the type system is right; the underlying schema design is wrong (R2-005). The synthesis-notes flagged this exact cast as a round-1 failure cluster ('TS strict (verifySpot.ts cast)').",
+      "verifySpot.ts:56 does a double-cast — `(spot.verification as unknown) as VerificationSpec` — even though spot.verification is already typed as VerificationSpec | undefined in schemas/phases.ts:45 and the `if (spot.verification === undefined)` check on line 50 already narrows the union. The double-cast was added (per synthesis-notes 'Round 1 — TS strict (verifySpot.ts cast)') to silence a strict-mode error, but it points at a type-flow problem rather than fixing it: SpotData.verification is the same VerificationSpec union runVerification consumes, so the cast should be a no-op. The cast survives because the runtime narrowing of `spot.verification === undefined` doesn't propagate through the destructured `current.spot` — TypeScript loses the narrowing across the `const { spot } = current` re-binding."
+    ],
+    "impacts": [
+      "Future schema changes that genuinely break VerificationSpec compatibility will not be caught at this site — the cast laundromat erases TS's check. Code-review noise, plus a small invitation to copy-paste the same pattern to other tool sites.",
+      "An `as unknown` cast is a load-bearing 'trust me' on the type system. Any future schema change to VerificationSpec (e.g., adding a fifth mode) will silently compile here even if SpotData.verification's type drifts. The cast also encodes an architectural mismatch — runVerification accepts VerificationSpec from schemas/phases.js but verify.ts re-exports it under the same name, creating two import paths to the same type."
+    ],
+    "evidence": "  // Cast through unknown to satisfy TS strict — spot.verification is a VerificationSpec\\n  // as validated by the schema (validatePhases runtime check above)\\n  const verSpec = (spot.verification as unknown) as VerificationSpec;",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R2-006",
+      "R4-007"
+    ]
+  },
+  {
+    "cluster_id": "C003",
+    "title": "verify.ts compile adapter loses spawn-error context, returning bare error code as output",
+    "file": "mcp/server/src/verify.ts",
+    "line_ranges": [
+      "94-100"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      3
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "error-handling"
+    ],
+    "recommendations": [
+      "Replace `output: e.code ?? e.message ?? String(err)` with `output: \\`Failed to spawn '${cmd} ${args.join(' ')}' (cwd=${projectRoot}): ${e.code ?? e.message ?? String(err)}\\`` so output preserves the command, cwd, and the underlying code/message. Optionally also surface a discriminated `error: 'spawn-failed'` field on VerificationResult so callers can branch."
+    ],
+    "descriptions": [
+      "When spawnFn throws synchronously (ENOENT for the binary, EACCES on the executable, the `command.split(' ')` producing an empty/undefined cmd), the catch block returns `{ pass: false, output: e.code ?? e.message ?? String(err) }`. For ENOENT spawning `pnpm`, this yields `output: 'ENOENT'` with no mention of the command, the projectRoot, or the spawn-time context. The student sees `pass: false, output: 'ENOENT'` and cannot tell whether their build legitimately failed or whether pnpm itself is missing."
+    ],
+    "impacts": [
+      "Indistinguishable failure modes: a legitimate build failure (pnpm exited non-zero with stderr) and a missing-binary error both return pass:false but the latter has a one-word output. The skill's help ladder (cycle 5) cannot pick the right rung. Also undermines preflight: pnpm-available probe should have caught this, but if the user's PATH changed mid-session, verifySpot fails silently with no actionable guidance."
+    ],
+    "evidence": "    } catch (err) {\n      const e = err as Error & { code?: string };\n      return {\n        pass: false,\n        output: e.code ?? e.message ?? String(err),\n      };\n    }",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R3-007"
+    ]
+  },
+  {
+    "cluster_id": "C004",
+    "title": "verify.ts command.split(' ') breaks on quoted arguments and empty commands",
+    "file": "mcp/server/src/verify.ts",
+    "line_ranges": [
+      "70-72"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      3
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "error-handling"
+    ],
+    "recommendations": [
+      "Use shell-quote parsing or split-with-quotes (e.g. `shell-quote.parse(command)`), or restrict the schema to a tokenized form `{ argv: string[] }`. At minimum, validate path.ts/phases.ts that build_command/verification.command is non-empty and tokenize defensively (filter empty results from split)."
+    ],
+    "descriptions": [
+      "Splitting `command` on a single space is naive. `pnpm build` works, but a path.json that declares `build_command: 'sh -c \"cd app && pnpm build\"'` — entirely valid — splits to args ['-c', '\"cd', 'app', '&&', ...] and runs nonsense. An empty string (validation in path.ts:53 only requires it be a string, not non-empty) sets cmd=''; nodeSpawnSync then throws TypeError synchronously. Multiple consecutive spaces yield empty-string args."
+    ],
+    "impacts": [
+      "Cycle 4 fixtures all use 'pnpm build' so the issue is latent, but the build_command field is meant to be configurable per spec.md. Future paths declaring richer commands will silently mis-execute. The catch block in lines 87-100 catches the synchronous spawn TypeError but reports it as a build failure (pass:false) — same indistinguishability as R3-007."
+    ],
+    "evidence": "  if (adapter.mode === 'compile') {\n    const parts = adapter.command.split(' ');\n    const cmd = parts[0];\n    const args = parts.slice(1);",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R3-008"
+    ]
+  },
+  {
+    "cluster_id": "C005",
+    "title": "compile adapter naive whitespace split mishandles quoted command args",
+    "file": "mcp/server/src/verify.ts",
+    "line_ranges": [
+      "69-72"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      6
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "security"
+    ],
+    "recommendations": [
+      "Either (a) document the constraint explicitly in the schema — `verification.command` must be whitespace-separated argv with no quoting/metacharacters — and reject offending commands at validatePhases time, or (b) accept `command` as a `string[]` (argv array) in the schema so curriculum authors don't have to parse-by-convention, or (c) use a real shell-words parser like `string-argv`. Do NOT add `shell: true` to spawnSync."
+    ],
+    "descriptions": [
+      "The compile adapter splits `adapter.command` with `command.split(' ')` and uses `parts[0]` as the executable + `parts.slice(1)` as args. This handles `'pnpm build'` correctly but breaks for any command containing quoted whitespace: `pnpm run \"build hard\"` becomes `['pnpm', 'run', '\"build', 'hard\"']` (literal quote chars in argv). It also collapses to ENOENT for any command authored with shell metacharacters — `'pnpm build && echo done'` becomes argv `['pnpm', 'build', '&&', 'echo', 'done']` which `pnpm` will see as bad args, not as a shell pipeline. spawnSync is invoked WITHOUT `shell: true`, so this is NOT a shell-injection vulnerability (good), but it is a brittle parser that silently breaks on any non-trivial command authored in phases.json. Curriculum authors would see misleading ENOENT/exit-1 with no diagnostic."
+    ],
+    "impacts": [
+      "Curriculum authors who write any command beyond simple `argv0 arg1 arg2` see silent breakage. No exploitable security consequence (the no-shell stance is correct), but the parsing strategy is fragile and the surface area for future curriculum authors is misleading. Belongs to category=security because the alternative (shell:true) would be a CRITICAL injection vector — the hardening choice deserves explicit documentation."
+    ],
+    "evidence": "const parts = adapter.command.split(' ');\nconst cmd = parts[0];\nconst args = parts.slice(1);",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R6-002"
+    ]
+  },
+  {
+    "cluster_id": "C010",
+    "title": "selectPath silently wipes cursor and ladder on re-selection",
+    "file": "mcp/server/src/tools/selectPath.ts",
+    "line_ranges": [
+      "118-129",
+      "120-127"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      1
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "correctness"
+    ],
+    "recommendations": [
+      "Either (a) refuse re-selection of the same slug with a structured `{ ok: false, errors: ['Path already selected — call resetProgress to start over'] }` and add a separate reset tool in cycle 5, or (b) preserve cursor/ladder when slug matches existing state (only re-init when slug differs or state is absent), or (c) at minimum surface a warning in the response when an existing cursor was discarded.",
+      "Reset `personalization: {}` when slug differs from `existingState.selected_path`; preserve it only when slug matches. Alternatively, run validatePersonalizationValues against the new path's declared options at selectPath time and drop any invalid keys."
+    ],
+    "descriptions": [
+      "selectPath unconditionally rebuilds state with `cursor: { phase_id: <first>, spot_id: <first> }` and `ladder: {}` whenever it runs. If the existing state already has `selected_path === slug` and a non-trivial cursor (e.g. user is mid-path at p2-spot-1 with hint_used and reference_shown true), a second `selectPath('01-orderbook-viewer')` call resets cursor to p1-bootstrap and clears ladder — silently destroying progress. Personalization and history are preserved; cursor and ladder are not. No test exercises this path (T-226/T-231 assert the absent-state initialization shape only).",
+      "When existingState exists and `selectPath` is called with a different slug, `personalization: existingState?.personalization ?? {}` carries the previous path's personalization values into the new path's state. If path A declared a `pool_subset` enum value (e.g. 'BOTH_ALT') that is not valid under path B's declared options, the new state contains stale values that bypass validation (validatePersonalizationValues only fires when setPersonalization is called, not at path-switch time). Later nextSpot substitution would emit the stale value into the prompt."
+    ],
+    "impacts": [
+      "User-visible data loss when the skill re-enters selectPath defensively (e.g. retry after an unrelated error, or cycle-5's ladder rung reset flow). The tool gives no warning and the response shape `{ ok: true, personalizationPrompts }` is identical between fresh and re-selected paths, so the skill cannot detect the wipe.",
+      "Cycle 4 ships a single path so this is unreachable. Cycle 5+ when a second path is added, switching paths could leak invalid personalization keys/values into substituted prompts and into the skill's UI."
+    ],
+    "evidence": "  const newState: State = {\n    schema_version: STATE_SCHEMA_VERSION,\n    selected_path: slug,\n    personalization: existingState?.personalization ?? {},\n    cursor: { phase_id: firstPhase.id, spot_id: firstSpot.id },\n    ladder: {},",
+    "confidence_spread": [
+      "high",
+      "medium"
+    ],
+    "source_ids": [
+      "R1-005",
+      "R1-006"
+    ]
+  },
+  {
+    "cluster_id": "C012",
+    "title": "selectPath redundantly re-reads/re-validates path.json after scanRegistry already did",
+    "file": "mcp/server/src/tools/selectPath.ts",
+    "line_ranges": [
+      "84-105"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      2
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "design"
+    ],
+    "recommendations": [
+      "Promote `personalization_ranges` from PathData to PathInfo (or add a richer `RegistryEntry` type with the full validated PathData). Update scanRegistry to populate it. selectPath/setPersonalization read the registry once and project what they need."
+    ],
+    "descriptions": [
+      "scanRegistry (registry.ts) reads, parses, validates, and shapes path.json into PathInfo. selectPath then calls scanRegistry, finds the slug, and immediately re-reads + re-parses + re-validates the same path.json (selectPath.ts:94-102) just to get personalization_ranges — a field PathInfo's projection happens to drop. Same pattern in setPersonalization.ts:38-51. The fix is to widen PathInfo to include personalization_ranges (already in PathData and validated), or to expose a `getValidatedPath(scanRoot, slug)` from registry.ts that returns the full PathData. Two file reads + two JSON.parse + two validatePath calls per tool invocation, all serving the same byte stream."
+    ],
+    "impacts": [
+      "Minor performance cost (negligible at one tool call per second) but doubled error-handling surface: each tool now has two failure modes for the same file ('registry rejected path.json' and 'tool re-validation rejected path.json'), and the messages differ. Maintenance cost when path.json adds fields: every tool must remember to extend its local validation block to surface them."
+    ],
+    "evidence": "  // Load path.json to get personalization_ranges\\n  let pathData: PathData;\\n  try {\\n    const pathJsonPath = path.join(projectRoot, 'paths', slug, 'path.json');\\n    const raw = await fsPromises.readFile(pathJsonPath, 'utf8');",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R2-008"
+    ]
+  },
+  {
+    "cluster_id": "C013",
+    "title": "selectPath/setPersonalization/nextSpot/verifySpot have no outputStyleOk gate",
+    "file": "mcp/server/src/tools/selectPath.ts",
+    "line_ranges": [
+      "75-129"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      6
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "security"
+    ],
+    "recommendations": [
+      "Add a startup-precondition check at the top of each new tool: read the output-style probe synchronously (cheap, no IO beyond an env-var read in the existing probeOutputStyle helper) and short-circuit with `{ ok: false, errors: ['Output style not enabled. Re-run start.'] }` when it fails. Alternatively, add a tiny FSM seam in state.ts that records `state.start_completed: true` and have each new tool refuse without it."
+    ],
+    "descriptions": [
+      "AC-1.3's load-bearing invariant is `start` performing zero state writes when `outputStyleOk === false`. The contract (line 11) extends this protection to the new tools by ASSERTION ONLY: 'selectPath, setPersonalization, nextSpot, verifySpot are reachable only after start returned outputStyleOk: true'. There is no programmatic enforcement: selectPath unconditionally calls saveState (line 129) regardless of output-style state; the same is true for setPersonalization (line 104) and verifySpot (line 63). A misbehaving skill, an out-of-spec MCP client, or an attacker calling tools out-of-order through the in-memory transport can write state even when outputStyleOk would have failed. The 'continues to hold' language in contract A11(c) relies on protocol discipline, not code."
+    ],
+    "impacts": [
+      "Defense-in-depth concern. AC-1.3 was originally specified to keep state pristine before the learning-output-style guard fired (so the user could install the style and re-start without inheriting half-written state). The new tools bypass that invariant if called out-of-order. The current MCP transport accepts any tool call at any time — there's no FSM. Severity is LOW because the contract explicitly accepts the protocol-only enforcement, but a future cycle that adds an FSM gate at the tool-handler layer would close the gap."
+    ],
+    "evidence": "// Load state — short-circuit on corrupt/schema-mismatch\nconst stateResult = await loadState(projectRoot);\n// ... no outputStyleOk check ...\nawait saveState(projectRoot, newState);",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R6-004"
+    ]
+  },
+  {
+    "cluster_id": "C014",
+    "title": "Four tools repeat the same state-load preamble inline",
+    "file": "mcp/server/src/tools/setPersonalization.ts",
+    "line_ranges": [
+      "21-36"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      2
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "design"
+    ],
+    "recommendations": [
+      "Add `mcp/server/src/tools/_phaseToolBase.ts` exposing `loadPhaseToolContext(projectRoot)` that returns either `{ ok: true; state, slug, pathData, phasesData }` or a structured error. Each tool calls it as a one-liner, then does its actual work. Cycle 5+ verb tools (askForHint, showReference, autoWrite) plug in trivially."
+    ],
+    "descriptions": [
+      "selectPath, setPersonalization, nextSpot, verifySpot each open with the same 5-line idiom: loadState; if corrupt → error; if schema-mismatch → error; if absent or no selected_path → error. Three of them additionally repeat the path.json-load + validate block (selectPath.ts:92-105, setPersonalization.ts:38-51 are byte-identical aside from a comment). The phase-loading block (loadPhases + try/catch wrapping the LoadPhasesError) is repeated verbatim in nextSpot.ts:67-73 and verifySpot.ts:33-39. Four small tools share four duplicated preludes; new tools (cycle 5+) will paste the same prologue."
+    ],
+    "impacts": [
+      "Each new phase-loop tool inherits ~20 lines of boilerplate before its actual logic. Changes to the state-load contract (e.g. add a new 'absent-but-recoverable' kind, surface state-corrupt warnings on the wire) require touching four sites. Inconsistencies are likely (e.g., setPersonalization uses falsy `!stateResult.state.selected_path` while selectPath checks `stateResult.kind === 'ok' ? stateResult.state : null` — different truthiness semantics for empty-string)."
+    ],
+    "evidence": "  // Load state — short-circuit on corrupt/schema-mismatch\\n  const stateResult = await loadState(projectRoot);\\n  if (stateResult.kind === 'corrupt') {\\n    return { ok: false, errors: [`State corrupt: ${stateResult.message}`] };\\n  }",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R2-004"
+    ]
+  },
+  {
+    "cluster_id": "C018",
+    "title": "LoadPhasesError does not distinguish ENOENT from other read failures",
+    "file": "mcp/server/src/phaseEngine.ts",
+    "line_ranges": [
+      "28-34"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      3
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "error-handling"
+    ],
+    "recommendations": [
+      "Make LoadPhasesError carry a discriminated reason: `reason: 'missing' | 'permission-denied' | 'malformed-json' | 'invalid-schema'` with the original error message in a separate `details` field. Tools can branch on reason; users get clearer guidance."
+    ],
+    "descriptions": [
+      "loadPhases catches the readFile error and constructs LoadPhasesError with `e.message ?? String(err)`. The errno code (ENOENT, EACCES, EISDIR, ENOTDIR) is dropped. The contract A12 introduces a warning kind `phase-engine-phases-load-failed` that 'carries slug and reason' — but reason is just a string blob. Callers in nextSpot.ts:71-72, verifySpot.ts:37-38, selectPath.ts:111-112 stringify the error with `String(err)` and surface it to the user verbatim. There's no path for the registry-rescan recovery branch that could legitimately race against a path being deleted."
+    ],
+    "impacts": [
+      "When phases.json disappears between scan and use (the exact case the contract calls out: 'a path can disappear between scan and use'), the user sees an ENOENT message but the engine has no way to programmatically detect 'rescan and retry'. Same blob format hides permission errors that need a different remediation."
+    ],
+    "evidence": "  try {\n    raw = await fsPromises.readFile(phasesPath, 'utf8');\n  } catch (err) {\n    const e = err as NodeJS.ErrnoException;\n    throw new LoadPhasesError(slug, e.message ?? String(err));\n  }",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R3-009"
+    ]
+  },
+  {
+    "cluster_id": "C019",
+    "title": "loadPhases performs no slug sanitization; arbitrary file-read via state.selected_path",
+    "file": "mcp/server/src/phaseEngine.ts",
+    "line_ranges": [
+      "25-26"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      6
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "security"
+    ],
+    "recommendations": [
+      "In loadPhases, reject slugs containing `..`, `/`, `\\`, or null bytes before calling path.join. Equivalent: `if (!/^[a-zA-Z0-9_-]+$/.test(slug)) throw new LoadPhasesError(slug, 'invalid slug format');`. Apply the same guard at the entry of nextSpot/verifySpot before reading state, OR in setPersonalization at line 36 where state.selected_path is also passed to path.join unchecked."
+    ],
+    "descriptions": [
+      "loadPhases(projectRoot, slug) builds the path with `path.join(projectRoot, 'paths', slug, 'phases.json')` and performs no sanitization on `slug`. With `slug='../../etc'`, `path.join` resolves to `/etc/phases.json` (traversing outside projectRoot/paths). selectPath validates slug against the registry-scanned list before calling loadPhases (selectPath.ts:86), but nextSpot and verifySpot read `slug` from `state.selected_path` (nextSpot.ts:65, verifySpot.ts:31) and pass it to loadPhases with no re-validation. A user (or attacker who can write the state file) who places `../../etc` into state.selected_path triggers an arbitrary fs.readFile of an attacker-chosen path. The contents are then JSON-parsed — a parse failure surfaces as a LoadPhasesError, but parse-success leaks file shape info via the validatePhases error message in the tool response."
+    ],
+    "impacts": [
+      "In the trust model where projectRoot is the user's own dev environment, this is a self-attack surface (the attacker is the user who already controls state.json). Not a privilege escalation. Defense-in-depth concern only. Worth flagging because the sanitization cost is one line and removes the entire class of state-tampering vectors."
+    ],
+    "evidence": "export async function loadPhases(projectRoot: string, slug: string): Promise<PhasesData> {\n  const phasesPath = path.join(projectRoot, 'paths', slug, 'phases.json');",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R6-003"
+    ]
+  },
+  {
+    "cluster_id": "C020",
+    "title": "State.selected_path is required-string in schema but used as optional everywhere",
+    "file": "mcp/server/src/schemas/state.ts",
+    "line_ranges": [
+      "22-29"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      2
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "design"
+    ],
+    "recommendations": [
+      "Either: make selected_path: `string | null` in the State type and update validateState accordingly (and tests' makeValidState helpers); OR validate selected_path.length > 0 in validateState and emit a single canonical 'state shape invalid' classification. The cycle-2 C008 'state-shape-invalid' kind carry-forward already maps to this exact case."
+    ],
+    "descriptions": [
+      "validateState requires selected_path to be a string (line 45-47). All four cycle-4 tools then test `!stateResult.state.selected_path` — i.e. treat empty-string as 'not selected'. The semantics across the codebase: 'selected_path is set' = 'state.kind === ok && state.selected_path !== \"\"'. But validateState accepts `\"\"` as valid; nothing in saveState rejects an empty string; the state file thus has two ways to encode 'no path' (file absent → kind:absent, vs file present with selected_path: \"\" → kind:ok with falsy slug) and the four tools handle them via two different branches."
+    ],
+    "impacts": [
+      "A buggy or malicious state.json with selected_path: \"\" passes schema validation, slips past selectPath/setPersonalization/nextSpot/verifySpot's 'No path selected' branch the same way 'absent' would, but bypasses scanRegistry's slug-validation gate that selectPath's normal flow runs. nextSpot then tries `loadPhases(projectRoot, '')` and surfaces a fopen error instead of a clean 'no path selected'. Wire-protocol-equivalent failure modes are spelled differently to the caller."
+    ],
+    "evidence": "  if (typeof obj['selected_path'] !== 'string') {\\n    return { ok: false, error: 'selected_path must be a string' };\\n  }",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R2-009"
+    ]
+  },
+  {
+    "cluster_id": "C021",
+    "title": "Personalization OptionDesc has two parallel shapes — DeclaredOptions union accepts both",
+    "file": "mcp/server/src/personalization.ts",
+    "line_ranges": [
+      "7-59"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      2
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "design"
+    ],
+    "recommendations": [
+      "Pick one canonical shape (PersonalizationOptionDecl, since it matches path.json's serialization). Update tests to construct option arrays directly. Drop OptionDesc + normalizeToArray (~25 LOC) in favor of a single signature `validatePersonalizationValues(values, options: PersonalizationOptionDecl[])`. If the test ergonomic 'Record<string, OptionDesc>' matters, expose a tiny `optionsFromRecord(rec)` helper in tests' test-utils, not in production personalization.ts."
+    ],
+    "descriptions": [
+      "personalization.ts exports two parallel descriptor shapes: `PersonalizationOptionDecl` (with `range?: {min,max,default}` and `enum?: string[]` — the schema/wire shape) and `OptionDesc` (with flattened `min/max` directly on the integer variant — a 'test suite and flat option descriptor' shape per the comment). validatePersonalizationValues accepts either via `DeclaredOptions = PersonalizationOptionDecl[] | Record<string, OptionDesc>` and a `normalizeToArray` helper. Two formats for the same semantic content, with the converter dropping/relabeling fields between them. The 'normalize to array' branch handles the Record path used by tests; the array path handles tools' callers. This is two coexisting input shapes carrying identical information, only one of which the schema actually defines."
+    ],
+    "impacts": [
+      "API surface area doubled with no behavioral payoff. Tests grow attached to the Record shape; future refactors that rename PersonalizationOptionDecl can break tests via the OptionDesc indirection. The synthesis-notes mention test-fixture amendments to support shape transitions; this fork is one source of fragility."
+    ],
+    "evidence": "// Accept either an array of PersonalizationOptionDecl or a Record<string, OptionDesc>\\ntype DeclaredOptions = PersonalizationOptionDecl[] | Record<string, OptionDesc>;",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R2-010"
+    ]
+  },
+  {
+    "cluster_id": "C023",
+    "title": "Personalization API supports two declared-options shapes with a normalize step",
+    "file": "mcp/server/src/personalization.ts",
+    "line_ranges": [
+      "7-59"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      4
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "simplicity"
+    ],
+    "recommendations": [
+      "Either (a) update tests/personalization.test.ts to use a PersonalizationOptionDecl[] literal — a one-time fixture rewrite — and delete IntegerOptionDesc/EnumOptionDesc/OptionDesc/DeclaredOptions/normalizeToArray, OR (b) pick the map form as canonical and rewrite tools/selectPath.ts and tools/setPersonalization.ts to use it. Either way, one shape, no normalization. (a) is the smaller diff."
+    ],
+    "descriptions": [
+      "personalization.ts exports three overlapping option-descriptor types — PersonalizationOptionDecl (used by tools), OptionDesc / IntegerOptionDesc / EnumOptionDesc (only used by tests), and a private DeclaredOptions union of the two — plus a normalizeToArray() function whose only job is to reconcile the two shapes. The map shape exists exclusively to match the test fixture in tests/personalization.test.ts:18-25, which chose to declare options as a Record<string, OptionDesc> rather than an array. Production code passes the array form; the map form is never produced by any non-test caller. The result is ~25 lines of branchy normalization code that exists to support a single test's preferred literal layout."
+    ],
+    "impacts": [
+      "Surface-area inflation. Three exported type names that mean almost-the-same-thing complicate IDE autocomplete and code review. A reader of personalization.ts has to scan 30 lines of types and a normalize helper before reaching the actual validation logic."
+    ],
+    "evidence": "// Accept either an array of PersonalizationOptionDecl or a Record<string, OptionDesc>\ntype DeclaredOptions = PersonalizationOptionDecl[] | Record<string, OptionDesc>;\n\nfunction normalizeToArray(declared: DeclaredOptions): PersonalizationOptionDecl[] {",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R4-004"
+    ]
+  },
+  {
+    "cluster_id": "C026",
+    "title": "Three new tools repeat the same load-state / load-phases / short-circuit boilerplate",
+    "file": "mcp/server/src/tools/nextSpot.ts",
+    "line_ranges": [
+      "52-73"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      4
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "simplicity"
+    ],
+    "recommendations": [
+      "Extract a single helper async function withSelectedPath<T>(projectRoot, fn: (state, phasesData) => Promise<T>): Promise<T | {error: string}> that handles the four short-circuit branches and the LoadPhasesError catch. Each tool collapses to ~5 lines: input validation + delegate to withSelectedPath. Reading LoadPhasesError.slug/reason properly into the warning kind (phase-engine-phases-load-failed already exists in warnings.ts:76-81) closes the unused-typed-fields loop."
+    ],
+    "descriptions": [
+      "tools/nextSpot.ts (52-73), tools/verifySpot.ts (18-39), and tools/setPersonalization.ts (21-34) each begin with the same ~20-line preamble: loadState → corrupt branch → schema-mismatch branch → absent-or-no-selected_path branch → loadPhases (in two of three) → catch-and-stringify error. The error messages are near-identical ('State corrupt: ...', 'State schema mismatch: ...', 'No path selected. Call selectPath first.'). The catch-and-String(err) pattern at nextSpot.ts:71-72 and verifySpot.ts:37-38 even shadows LoadPhasesError's structured slug+reason fields by stringifying the entire Error object — the typed seam exists but no caller uses it."
+    ],
+    "impacts": [
+      "~60 lines of copy-paste across three files. A future contributor adding state-recovery handling will need to remember to update three sites, or one will drift. The LoadPhasesError type carries slug and reason fields that none of the callers extract, which is a silent design smell — the structured error was added to enable richer reporting, but consumers throw away the structure."
+    ],
+    "evidence": "  } catch (err) {\n    return { done: false, error: `Failed to load phases: ${String(err)}` };\n  }",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R4-006"
+    ]
+  },
+  {
+    "cluster_id": "C030",
+    "title": "T-291 only asserts placeholder presence in hint.md; never exercises substitution against rung payload",
+    "file": "tests/phaseEngine.test.ts",
+    "line_ranges": [
+      "703-715"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      5
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "Either rename to 'hint.md contains a {{ pool_subset }} placeholder for cycle-5 wiring' (clarifying it is presence-only), or add a call: `expect(substitutePromptOnly(hintBytes, { pool_subset: 'DEEP_SUI', poll_interval_ms: 3000 }).includes('DEEP_SUI')).toBe(true)`."
+    ],
+    "descriptions": [
+      "Contract scope says: 'Personalization substitution is scoped exclusively to spot prompts (and the rung markdown payloads — hint/reference/auto-write — when those are loaded; cycle 5 wires the rungs but cycle 4 establishes the substitution rule)'. T-291's name claims 'hint exercises substitution' but the body only `fs.readFileSync(...hint.md)` and asserts the file content matches `/\\{\\{\\s*pool_subset\\s*\\}\\}/`. No call to substitutePromptOnly is made against the loaded markdown; nothing verifies that the substitution rule (when wired) would resolve correctly against the rung payload. The test passes for any hint.md containing the placeholder substring even if the substitution function would reject it."
+    ],
+    "impacts": [
+      "Since cycle 5 will wire the rungs, this is non-blocking now. But the test name overstates coverage — a future review of 'is the rung-substitution rule covered' may incorrectly conclude yes."
+    ],
+    "evidence": "const hint = fs.readFileSync(path.join(base, 'hint.md'), 'utf8');\n    expect(/\\{\\{\\s*pool_subset\\s*\\}\\}/.test(hint)).toBe(true);",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R5-005"
+    ]
+  },
+  {
+    "cluster_id": "C031",
+    "title": "T-254 RegistryWarning union check is string-grep; passes if kind literals appear in comments",
+    "file": "tests/registry.test.ts",
+    "line_ranges": [
+      "516-540"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      5
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "Augment with a small TypeScript snippet compiled via the project tsc setup (or asserted at type-level via a `Equal<>` helper) that fails compile if RegistryWarning lacks discriminated narrowing. Alternatively, parse the AST and assert RegistryWarning is a TypeAliasDeclaration whose type is a UnionType of literal kinds."
+    ],
+    "descriptions": [
+      "T-254 enforces 'RegistryWarning is a discriminated union of exactly eight kinds' via `content.indexOf(\"'\" + k + \"'\")` for each expected kind plus a negative regex on `kind: string`. The positive test passes if each kind literal appears ANYWHERE in warnings.ts source (e.g., in a docblock comment listing the kinds). It does not verify that the kinds are members of an actual TypeScript discriminated union. The negative `looseRe` test only catches the most literal form `kind: string` and would not catch `kind: K` where K is an unconstrained type alias."
+    ],
+    "impacts": [
+      "A stub warnings.ts with the kinds buried in comments and a permissive shape would pass T-254. The companion T-256 runtime check (`isRegistryKind` runtime list) is also not a real type-narrowing assertion; the comment correctly notes 'the load-bearing assertion is the tsc --noEmit check (T-282)'."
+    ],
+    "evidence": "for (const k of expectedKinds) {\n      const single = content.indexOf(\"'\" + k + \"'\") !== -1;\n      const double = content.indexOf('\"' + k + '\"') !== -1;\n      expect(single || double, 'kind literal not found: ' + k).toBe(true);\n    }",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R5-004"
+    ]
+  },
+  {
+    "cluster_id": "C032",
+    "title": "T-258 phase-engine warning kinds tested by string-grep only — no shape or emission test",
+    "file": "tests/registry.test.ts",
+    "line_ranges": [
+      "587-592"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      5
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "Add field-level assertions: import the union type at runtime via a discriminator switch, or write a small test that constructs each warning and TypeScript-checks the field set. Equivalently, parse the warnings.ts AST and assert each new interface declares the specified fields."
+    ],
+    "descriptions": [
+      "T-258 asserts the three new warning kinds (`phase-engine-phases-load-failed`, `personalization-validation-failed`, `verification-mode-unsupported`) appear in warnings.ts via `content.indexOf(...) > -1`. No test verifies that any code path actually emits these warnings, that they have the expected payload shape (e.g., `phase-engine-phases-load-failed` carrying `slug` and `reason` per contract), or that the discriminated union narrows them correctly. The contract specified payloads (`carries slug and reason`, `carries errors: string[]`, `carries mode: string`); T-258 does not assert those payload fields exist."
+    ],
+    "impacts": [
+      "A warnings.ts that mentions the kinds in comments would pass T-258. Downstream consumers relying on the structured payload would discover the schema mismatch only at runtime."
+    ],
+    "evidence": "expect(content.indexOf('phase-engine-phases-load-failed')).toBeGreaterThan(-1);",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R5-009"
+    ]
+  },
+  {
+    "cluster_id": "C033",
+    "title": "Contract called for substitutePromptOnly internal-assertion guard test; tests only assert via static greps",
+    "file": "tests/personalization.test.ts",
+    "line_ranges": [
+      "130-205"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      5
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "Add a runtime sentinel/guard test as the contract specified. E.g., have substitutePromptOnly take an optional `field?: string` arg used only by tests; pass `field='target_file'` and assert it throws. Or more simply, a positive assertion that the function only ever returns a string without mutating any property named target_file/target_range/verification."
+    ],
+    "descriptions": [
+      "Contract `tests/personalization.test.ts` line says: 'Negative test: passing target_file/target_range strings through substitutePromptOnly is forbidden by an internal assertion (test that the function throws on a known guard sentinel) — the test enforces the AC-6.3 boundary at the unit level.' The shipped tests T-214 and T-215 are static greps over engine source: T-214 checks `{{...}}` placeholders don't appear in non-personalization engine files; T-215 checks no caller passes the four field names through substitutePromptOnly via a 160-char window heuristic around each call site. Neither exercises a runtime guard inside substitutePromptOnly. There is no test asserting `expect(() => substitutePromptOnly('{{ x }}', { x: 'val' }, { sentinel: 'target_file' })).toThrow()` or similar."
+    ],
+    "impacts": [
+      "If substitutePromptOnly is later refactored to accept a path/range parameter, only the static greps catch it — and only if a caller's surrounding 160 chars happen to contain one of the four field names. A caller that destructures the field into a local variable named `prompt` first would defeat T-215 and ship a violation."
+    ],
+    "evidence": "describe('substitutePromptOnly — substitution scope guards (AC-6.3)', () => {\n  it('T-214: ... engine source contains zero {{...}} placeholders outside personalization.ts ...",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R5-006"
+    ]
+  },
+  {
+    "cluster_id": "C034",
+    "title": "T-267 round-trip cannot distinguish whether saveState persists auto_write_attempted",
+    "file": "tests/state.test.ts",
+    "line_ranges": [
+      "1196-1213"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      5
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "Either rename T-267 to clarify it is a 'durability path remains intact (no exception on write/read)' regression, or seed the test with a rung value where one of the four fields is `true` so deep-equal would catch a saveState that drops fields. The latter is one keystroke and restores the field-level round-trip claim."
+    ],
+    "descriptions": [
+      "T-267 seeds a state literal with `auto_write_attempted: false` explicitly, calls saveState, calls loadState, and expects deep-equal. The amended cycle-4 loader normalizes absent rung fields to `auto_write_attempted: false` (mcp/server/src/schemas/state.ts:94). Therefore: (a) if saveState writes the field verbatim AND loadState reads it, deep-equal passes; (b) if saveState OMITS the field at write time AND loadState defaults absent → false, deep-equal STILL passes. T-267 alone cannot tell these apart. The synthesis-notes flagged this as a fixture amendment; the orchestrator's amendment was correct but the resulting test is no longer load-bearing for whether the persistence layer carries the new field."
+    ],
+    "impacts": [
+      "T-267 is no longer the round-trip canary; T-269 (true) and T-271 (default-false-on-absent-write) together cover the actual round-trip semantics, so coverage is intact in aggregate. But anyone reading T-267 alone may misread it as a strong round-trip assertion when it is no longer one."
+    ],
+    "evidence": "'p1-spot-1': { hint_used: false, reference_shown: false, auto_completed: false, auto_write_attempted: false }",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R5-007"
+    ]
+  },
+  {
+    "cluster_id": "C035",
+    "title": "T-231 'state persists via saveState round-trip' uses fully-mocked state.ts; not an integration test",
+    "file": "tests/selectPath.test.ts",
+    "line_ranges": [
+      "189-208"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      5
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "Either drop the 'integration with state.ts loadState/saveState contract' phrasing from the description (it's a unit test of selectPath's call shape), or add a parallel non-mocked variant that lets the real saveState write to a tempdir."
+    ],
+    "descriptions": [
+      "T-231's name and body comment claim 'integration with state.ts loadState/saveState contract'. But the test file mocks `'../mcp/server/src/state.js'` at the top with `vi.mock(...)` and `stateMock.{loadState,saveState}` are vi.fn() stubs. The 'round-trip' is purely in-memory: saveState writes into a closure variable `saved`, loadState returns `saved`. No actual file I/O, JSON serialization, schema validation, or atomic-rename path is exercised. A bug where selectPath produces a state that the real state.ts would reject (e.g., bad schema) is not caught."
+    ],
+    "impacts": [
+      "Coverage gap: selectPath's interface to state.ts is tested only at the call-shape level. The cycle-4 harness.lesson.test.ts T-283 exercises the real file path through MCP, so this is not a hard gap — but the test name oversells."
+    ],
+    "evidence": "it('T-231: state persists via saveState round-trip (integration with state.ts loadState/saveState contract)', async () => {",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R5-008"
+    ]
+  },
+  {
+    "cluster_id": "C024",
+    "title": "substitutePromptOnly's hasOwnProperty guard is correct against prototype pollution",
+    "file": "mcp/server/src/personalization.ts",
+    "line_ranges": [
+      "133-138"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      6
+    ],
+    "max_severity": "info",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "security"
+    ],
+    "recommendations": [
+      "No action. Worth retaining the hasOwnProperty.call guard against future refactors that might 'simplify' to `key in values`."
+    ],
+    "descriptions": [
+      "Positive observation: `substitutePromptOnly` correctly uses `Object.prototype.hasOwnProperty.call(values, key)` rather than `key in values` or `values[key] !== undefined`. The placeholder-key regex `[a-zA-Z_][a-zA-Z0-9_]*` does match identifiers like `__proto__` and `constructor`, but the hasOwnProperty.call guard ensures only own-properties of `values` are read. Combined with `validatePersonalizationValues` rejecting unknown keys (personalization.ts:75-79) before save, the `state.personalization` map cannot contain `__proto__` as an own-property in normal flow. Even if a tampered state.json injected `__proto__` as own-property, the substitution would safely emit `String(values.__proto__)` rather than reading from `Object.prototype`. AC-6.3 substitution scope is also met: zero {{...}} usage outside personalization.ts in engine code (verified via grep across mcp/server/src/**/*.ts)."
+    ],
+    "impacts": [
+      "None (positive finding). The substitution function is robust against prototype-pollution-flavored attacks."
+    ],
+    "evidence": "if (Object.prototype.hasOwnProperty.call(values, key)) {\n  return String(values[key]);\n}",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R6-006"
+    ]
+  },
+  {
+    "cluster_id": "C027",
+    "title": "nextSpot returns full verification block including command verbatim to client",
+    "file": "mcp/server/src/tools/nextSpot.ts",
+    "line_ranges": [
+      "108"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      6
+    ],
+    "max_severity": "info",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "security"
+    ],
+    "recommendations": [
+      "Document in the curriculum-authoring guide (when written) that verification.command and verification.endpoint are part of the LLM's visible context. Optionally, redact verification.command from the nextSpot response if there's no reason for the LLM to see the build command — verifySpot can read it independently from the manifest."
+    ],
+    "descriptions": [
+      "nextSpot's response copies `spot.verification` verbatim into the SpotView (line 108: `verification: spot.verification`). The verification block contains the literal `command` (or `endpoint`) string from phases.json. A1/A3 do require target_file/target_range/verification to be returned byte-for-byte, but the SpotView is then JSON-serialized and shipped to the LLM client (index.ts:118 `text: JSON.stringify(result)`). If a future curriculum places sensitive data in verification.command (unlikely, but possible — e.g. tokens passed via env), it surfaces in the assistant's context. Not an exploitable vulnerability — phases.json is curriculum-authored — but worth noting that the assistant sees the literal command string and can be social-engineered into echoing it."
+    ],
+    "impacts": [
+      "Information disclosure boundary: the assistant receives every verification.command verbatim. Curriculum authors should avoid placing secrets in verification.command. No current exposure; flagged for future authors."
+    ],
+    "evidence": "verification: spot.verification,      // byte-for-byte from manifest",
+    "confidence_spread": [
+      "low"
+    ],
+    "source_ids": [
+      "R6-005"
+    ]
+  },
+  {
+    "cluster_id": "C036",
+    "title": "AC-1.3 / A11 / A12 / A21 invariants hold in cycle-4 engine code",
+    "file": "mcp/server/src/tools/start.ts",
+    "line_ranges": [
+      "24-36"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      6
+    ],
+    "max_severity": "info",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "security"
+    ],
+    "recommendations": [
+      "No action on these specific invariants. See R6-001 for the parallel-anti-pattern violation that A13's spirit (not letter) misses."
+    ],
+    "descriptions": [
+      "Positive observation: cycle-4 carry-forward invariants validate via grep. (a) A11(a): `kind: 'shell'` literal exists ONLY in mcp/server/src/tools/runPreflightProbe.ts:14; the four new tool files have zero matches. (b) A11(b)/A21: literal `01-orderbook-viewer` matches zero files in mcp/server/src/. (c) A11(c)/AC-1.3: start.ts:24-36 returns immediately without calling loadState or saveState when `!styleResult.ok` — the early-return path includes only the registry scan (read-only) and the warning unshift; no fs writes. The four new tools are not reached on this path because the MCP server returns from start with the empty paths/warnings payload and the skill is supposed to halt per the protocol. (d) A13: literal `setSpawnOverride` matches zero files in mcp/server/src/; preflight.ts uses per-call ProbeOptions.spawn only. NOTE that A13's intent is partially undermined by R6-001 (verify.ts re-introduces a parallel global mutable seam under a different name)."
+    ],
+    "impacts": [
+      "None (positive finding). The grep-based invariants from the contract pass."
+    ],
+    "evidence": "if (!styleResult.ok) {\n    const warnings: (RegistryWarning | StateWarning)[] = [...registry.warnings];\n    if (styleResult.warning) {\n      warnings.unshift(styleResult.warning as StateWarning);\n    }\n    return {\n      outputStyleOk: false,",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R6-007"
+    ]
+  }
+]

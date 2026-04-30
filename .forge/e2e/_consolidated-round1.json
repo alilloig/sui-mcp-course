@@ -1,0 +1,727 @@
+[
+  {
+    "cluster_id": "C003",
+    "title": "E-014 cannot pass: production phases.json p3 is a stub with target_range 1-1, not the spec's p3-poll/116-145 with poll_interval_ms substitution",
+    "file": "paths/01-orderbook-viewer/phases.json",
+    "line_ranges": [
+      "47-63"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      1
+    ],
+    "max_severity": "high",
+    "min_severity": "high",
+    "disputed_severity": false,
+    "categories": [
+      "e2e-flow"
+    ],
+    "recommendations": [
+      "Update paths/01-orderbook-viewer/phases.json so phase ids and spot manifests match the spec's normative section (Registry Schema phases.json example, lines 230-294 of spec.md): phase id 'p2-retry' (not 'p2-polling') with target_range '103-114', phase id 'p3-poll' (not 'p3-display') with target_range '116-145' and a prompt embedding '{{ poll_interval_ms }}' such as 'midPrice + getLevel2TicksFromMid every {{ poll_interval_ms }} ms'. Author the rungs/p2-spot-1/* and rungs/p3-spot-1/* content packs and the phases/p2.md, phases/p3.md explainers. Until that ships, mark E-014 (and E-004's 'p2-retry' clause and E-015's 'p2-retry' cursor seed) as expected-fail in cycle-e2e-pass and surface them as remediation work rather than as a green pass."
+    ],
+    "descriptions": [
+      "Drove scenario E-014 against the production manifest. Phase 1 substitution works correctly: with personalization {poll_interval_ms:5000, pool_subset:'DEEP_SUI'}, nextSpot at p1-bootstrap renders the prompt 'You are configuring for pool: DEEP_SUI.' and contains zero residual {{ pool_subset }} placeholder — confirming substitutePromptOnly() touches only the prompt and leaves target_file ('src/App.tsx') and target_range ('39-58') unchanged byte-for-byte (AC-6.3 first half holds at p1). However the scenario's load-bearing assertion is at p3: 'walk to phase p3-poll and request the spot ... assert the rendered prompt for p3-spot-1 contains \"5000\" (substituted into the polling-interval clause) NOT the literal {{ poll_interval_ms }} ... assert target_file (\"src/App.tsx\") and target_range (\"116-145\") are unchanged from the manifest defaults'. The shipped phases.json has phase id 'p3-display' (not 'p3-poll' as the spec/scenario require), with spot p3-spot-1 carrying target_range '1-1' (not '116-145'), prompt 'TBD in cycle 5+: Render the order book data in the UI component.' (no {{ poll_interval_ms }} placeholder), and no rungs or doc_links. After advancing through verifySpot twice (with verify stub pass:true), nextSpot at the third position returned phase.id='p3-display' spot.target_range='1-1'. The scenario therefore cannot pass: the phase id literal mismatches, the target_range literal mismatches, and the prompt contains no placeholder for substitution to demonstrate. This contradicts spec.md lines 287-290 and 410-411 which require p3-spot-1 target_range 116-145 and the {{ poll_interval_ms }} placeholder in the polling-tick prompt."
+    ],
+    "impacts": [
+      "E-014 is the only scenario that proves substitution flows through to a downstream phase prompt, and AC-6.3's second clause (substitution surfaces in 'subsequent phase prompts as {{ poll_interval_ms }} style substitution') is unreachable at p3 with the current manifest. The cycle-e2e-pass.sh harness will fail this scenario at runtime when it tries to assert phase_id='p3-poll' — which is the correct outcome (the manifest is wrong, not the harness). Cycle 6 must update phases.json to materialize p2-retry/p3-poll with the spec's target ranges and prompt placeholders, or the spec must be amended to mark p2/p3 as future work. The mismatch also blocks E-015 (see R1-004) and the help-ladder scenario E-004's 'cursor advanced to p2-retry/p2-spot-1' assertion."
+    ],
+    "evidence": "phases.json defines: { \"id\": \"p3-display\", ... \"target_range\": \"1-1\", \"prompt\": \"TBD in cycle 5+: Render the order book data in the UI component.\" } — scenario E-014 expects phase_id 'p3-poll', target_range '116-145', and substitution of poll_interval_ms=5000 into the prompt",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R1-003"
+    ]
+  },
+  {
+    "cluster_id": "C004",
+    "title": "E-015 cannot pass: seeded cursor 'p2-retry'/'p2-spot-1' is unreachable because manifest uses 'p2-polling'",
+    "file": "mcp/server/src/phaseEngine.ts",
+    "line_ranges": [
+      "60-74"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      1
+    ],
+    "max_severity": "high",
+    "min_severity": "high",
+    "disputed_severity": false,
+    "categories": [
+      "e2e-flow"
+    ],
+    "recommendations": [
+      "Same as R1-003: rename phases in paths/01-orderbook-viewer/phases.json to 'p2-retry' and 'p3-poll' to align with spec.md and scenarios.json. Once the rename ships, E-015 passes as written. Alternatively, if the team chooses to keep 'p2-polling'/'p3-display' as the canonical names, update spec.md (Registry Schema phases.json example, AC text), scenarios.json (E-004, E-014, E-015), and tests/fixtures/state/valid-cursor-p2.json all in lockstep — but the spec already takes a strong normative position on 'p2-retry'/'p3-poll' (lines 230-294, 410-411), so the manifest is the right place to fix."
+    ],
+    "descriptions": [
+      "Drove scenario E-015 by seeding <project>/.sui-deepbook-course/state.json with the exact preconditions from scenarios.json (and matching tests/fixtures/state/valid-cursor-p2.json verbatim): schema_version=1, selected_path='01-orderbook-viewer', cursor={phase_id:'p2-retry', spot_id:'p2-spot-1'}, ladder.p1-spot-1.hint_used=true. Calling start returned the state intact with cursor.phase_id='p2-retry' preserved exactly (state.ts loadState round-trips correctly — AC-7.1 first clause holds and ladder is preserved exactly). Calling nextSpot, however, returned {done: true} with no phase or spot, because phaseEngine.ts getCurrentSpot scans the loaded phases (which are 'p1-bootstrap', 'p2-polling', 'p3-display') for phase.id==='p2-retry' and finds nothing, then returns done:true. The scenario's load-bearing assertion 'nextSpot returns phase_id \"p2-retry\" / spot_id \"p2-spot-1\"' therefore cannot hold. The state is round-tripped correctly (the persistence half of AC-7.1 is fine), but resumption against the live manifest yields done:true instead of the expected resume-at-p2-retry view. This is symptomatic of the same root cause as R1-003: production phases.json uses 'p2-polling'/'p3-display' while spec.md, scenarios.json, and the test fixture all use 'p2-retry'/'p3-poll'."
+    ],
+    "impacts": [
+      "E-015 is the canonical resume-on-restart proof for AC-7.1. With the current manifest, a returning student whose previous session left cursor at p2-retry would silently skip to done:true, which the conductor would interpret as 'lesson finished' — a real, observable bug for any student in the wild whose state.json predates the manifest rename. The fixture tests/fixtures/state/valid-cursor-p2.json was authored against the spec's phase ids, so the cycle-2 contract test for state I/O passes (because it only checks loadState round-tripping), but the cycle-e2e walk through nextSpot exposes the manifest/state divergence. This is the same defect class as R1-003 surfaced from the resume side instead of the personalization side."
+    ],
+    "evidence": "Seeded state.cursor={phase_id:'p2-retry', spot_id:'p2-spot-1'}; nextSpot returned {done: true} because production phases.json declares 'p2-polling' and 'p3-display' instead of the spec's 'p2-retry' and 'p3-poll' (scenario E-015)",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R1-004"
+    ]
+  },
+  {
+    "cluster_id": "C005",
+    "title": "E-002 partial: outputStyleOk=false but no message names plugin or activation step",
+    "file": "mcp/server/src/outputStyle.ts",
+    "line_ranges": [
+      "46-64"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      2
+    ],
+    "max_severity": "high",
+    "min_severity": "high",
+    "disputed_severity": false,
+    "categories": [
+      "e2e-flow"
+    ],
+    "recommendations": [
+      "In probeOutputStyle, attach a warning on the disabled/missing-plugin paths (lines 53 and 63) with kind 'output-style-disabled' and a message like 'learning-output-style@claude-plugins-official is not enabled. Run: claude plugins enable learning-output-style@claude-plugins-official' so start.ts can propagate it. Alternatively, mirror probes/learningOutputStyle.ts's default-string fallback for the no-warning branches. Add an assertion in start.tool.test.ts that response.warnings includes a kind/output-style-related entry whose message names the plugin when outputStyleOk is false."
+    ],
+    "descriptions": [
+      "Scenario E-002 asserts that when learning-output-style@claude-plugins-official is set to false in ~/.claude/settings.json, the start tool must return outputStyleOk:false WITH a message that names 'learning-output-style' and the activation step. I drove the harness end-to-end with HOME pointed at a temp dir whose settings.json has the plugin set to false; the start tool correctly returns outputStyleOk:false and produces zero state-file mutations (AC-1.3 carry-forward holds), but the warnings array contains only an unrelated 'no-paths-dir' entry. probeOutputStyle returns a bare {ok:false} (no warning attached) for the disabled / missing-key case at lines 53 and 63, and start.ts therefore has no warning to surface. AC-1.1 explicitly requires 'a refusal naming the plugin and the activation step' on this exact path; that contract is unmet and the scenario fails its assertion 'message naming \"learning-output-style\" and the activation step'."
+    ],
+    "impacts": [
+      "AC-1.1 is silently violated for the most common failure path (plugin entry exists with value false, or plugin entry absent from enabledPlugins). The student receives outputStyleOk:false with no actionable guidance, defeating the spec's stated UX goal that 'failure behavior is verbal' with a canned message naming the activation step. The skill layer will issue a generic refusal because no plugin-named message is available to render."
+    ],
+    "evidence": "E-002: probeOutputStyle returns `return { ok: false };` on lines 53 and 63 with no warning; harness run produced `outputStyleOk: false` and `warnings: [{ kind: 'no-paths-dir', message: '...' }]` with `any warning names \"learning-output-style\": false` and `state.json exists: false`.",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R2-001"
+    ]
+  },
+  {
+    "cluster_id": "C008",
+    "title": "Corrupt state.json is archived but never unlinked — recovery flow deadlocks",
+    "file": "mcp/server/src/state.ts",
+    "line_ranges": [
+      "87-106"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      3
+    ],
+    "max_severity": "high",
+    "min_severity": "high",
+    "disputed_severity": false,
+    "categories": [
+      "e2e-flow"
+    ],
+    "recommendations": [
+      "Add a recovery step. Two clean options: (1) introduce a `resetState` MCP tool that unlinks state.json after archiving (the skill calls it after the user picks 'resume'), or (2) in selectPath, when stateResult.kind==='corrupt' AND the archive write succeeded, treat it as 'absent' and proceed (existing archive preserves the original bytes). Either way, state.ts must own the unlink-after-archive contract, and start should de-duplicate archive emission so repeated /start calls do not regenerate archives of identical bytes."
+    ],
+    "descriptions": [
+      "Scenario E-006 step 4 is 'choose \"resume from phase 0\"; assert a fresh state.json is created and cursor is at p1-bootstrap/p1-spot-1'. The implementation archives the corrupt bytes but never removes (nor truncates, nor overwrites) <projectRoot>/.sui-deepbook-course/state.json. selectPath calls loadState first and short-circuits on corrupt with errors:['State corrupt: ...'] (selectPath.ts L83-85), so the user cannot transition out of the corrupt state through any documented MCP tool. Verified by directly driving start → selectPath via the harness: selectPath returns ok:false; a second start re-archives the same bytes; running it N times produces N+1 archive files. The student is wedged unless they manually `rm state.json` outside the plugin — there is no MCP-side recovery action."
+    ],
+    "impacts": [
+      "AC-7.2's full intent ('the student is offered \"resume from phase 0\" or \"abort\"' in spec.md L122) is unimplemented. A real student who hits state corruption cannot resume without leaving the plugin to delete state.json by hand. Each /start retry leaks another corrupt-archive file under .sui-deepbook-course/, growing without bound."
+    ],
+    "evidence": "state.ts archiveCorruptFile only writes the archive: `await fsPromises.writeFile(archivePath, content, { flag: 'wx', mode: 0o600 }); return archivePath;` — no `await fsPromises.unlink(path.join(stateDir, STATE_FILE))` after. selectPath.ts L83: `if (stateResult.kind === 'corrupt') { return { ok: false, errors: [\\`State corrupt: ${stateResult.message}\\`] }; }`. Harness drive of scenario E-006 step 4 produces selectPath ok:false; second start emits a 2nd archive with N=3 archives after 3 calls.",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R3-002"
+    ]
+  },
+  {
+    "cluster_id": "C013",
+    "title": "E-008 real-deploy path is gated by sui-cli-version precondition that the scenario does not declare",
+    "file": "mcp/server/src/probes/manifest.ts",
+    "line_ranges": [
+      "107-114",
+      "82-101"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      4
+    ],
+    "max_severity": "high",
+    "min_severity": "medium",
+    "disputed_severity": false,
+    "categories": [
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "Either (a) extend withDeployStub to accept a recheckCount parameter and have the stub branch run checkManifest() that many times so the retry loop is observable in the stub path; or (b) drop the '3 times in a row' clause from E-007 scenario steps and add a dedicated unit test for runRealDeploy's recheck loop.",
+      "Three options, in preference order: (1) Add 'Sui CLI in 1.63.2-1.64.1' to E-008 preconditions in scenarios.json AND have cycle-e2e-pass.sh / the harness skip E-008 with reason 'sui CLI X.Y.Z outside supported range' analogous to the docker-info skip; (2) Widen the sui-cli supported range (the spec's 1.63.2-1.64.1 window is from 2026-Q1 deepbook-sandbox README; 1.69.2 likely also works against the same sandbox shape — confirm by trying); (3) Make the precondition gate skippable via an opt-in env var (E2E_DEPLOY_SKIP_PRECONDITIONS=1) that the harness sets when the orchestrator decides to drive the real deploy anyway. Option 1 is the cheapest and matches the existing skip-with-reason convention."
+    ],
+    "descriptions": [
+      "Scenario E-007 step 5 reads 'assert the post-deploy manifest probe fails 3 times in a row'. The real-deploy branch (runRealDeploy) implements that with MAX_RECHECK_ATTEMPTS=3 at lines 194-200. The stub branch (runStubDeploy at lines 107-114) does not perform any manifest re-check — it returns a hard-coded {pass: false, logs: ['[stub] pnpm deploy-all --quick started', '[stub] deploy-all exited 0']} envelope and exits immediately. Consequently the harness fixture E-007 uses cannot observe the 3-attempt retry behavior; the assertion as written in scenarios.json is unverifiable through the stub. The harness either has to swap to a more elaborate stub (one that increments a counter and returns failure 3 times before giving up) or the scenario's 'fails 3 times in a row' clause has to be reframed as an implementation invariant covered by unit tests, not by E-007.",
+      "runDeployRemediation enforces three precondition probes before spawning the real deploy: docker-running, sui-cli-version, sandbox-repo-present (lines 84-101). The sui-cli-version probe rejects any version outside 1.63.2-1.64.1. On this machine (sui 1.69.2-33ef98b23370), the gate trips and runDeployRemediation returns {pass: false, message: \"Precondition probe 'sui-cli-version' failed: Sui CLI version 1.69.2 is outside the supported range (1.63.2–1.64.1)…\"} in 0.1 seconds — without ever spawning pnpm deploy-all. E-008's preconditions in scenarios.json list 'Docker Desktop running' and 'sandbox checkout present' but do NOT enumerate Sui CLI version range; nor does the harness's withDeployStub or any other fixture surface a way to satisfy/bypass this gate. Reviewers running E-008 on developer machines with current Sui CLI (the common case — Mainnet is at 1.69.x as of 2026-04) will see the scenario short-circuit on a precondition and never exercise the deploy mechanics. I had to bypass the gate manually (custom checkPrecondition that always returns pass) to drive the real deploy successfully — see R4-003."
+    ],
+    "impacts": [
+      "A spec-stated assertion ('fails 3 times in a row') is not actually exercised by the harness wired for E-007. If a future change collapses the recheck loop to a single attempt in the real-deploy branch, neither E-007 nor any other e2e scenario would catch the regression. This is the classic tautology-hunting failure mode where a test passes by virtue of a stub that doesn't model the behavior under test.",
+      "E-008 as written is unrunnable on any environment whose Sui CLI is outside the narrow 1.63.2-1.64.1 window. The Docker-gated skip-with-reason convention from cycle-3 synthesis-notes only handles the docker-info case; it does not cover the sui-cli-out-of-range case, so reviewers will incorrectly conclude 'E-008 fails' instead of 'E-008 was gated by an undeclared precondition'. This will spawn a needless remediation cycle. Worse, when the supported sui range eventually slides forward, every CI machine and reviewer machine will face this trap."
+    ],
+    "evidence": "Scenario E-008. Real-mode invocation result on this machine: {\"pass\":false,\"message\":\"Precondition probe 'sui-cli-version' failed: Sui CLI version 1.69.2 is outside the supported range (1.63.2–1.64.1). Run: brew install sui\"}. Local sui --version: 'sui 1.69.2-33ef98b23370'. Code at manifest.ts lines 84-101: 'const preconditions = [\"docker-running\", \"sui-cli-version\", \"sandbox-repo-present\"]; for (const probeId of preconditions) { const result = await checkPrecondition(probeId); if (!result.pass) { …return { pass: false, message: warning.message, warning }; } }'.",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R4-002",
+      "R4-004"
+    ]
+  },
+  {
+    "cluster_id": "C017",
+    "title": "E-010 precondition gate leaks unstubbed probes; docker-fail short-circuit assertion fails on stock host",
+    "file": "mcp/server/src/tools/runPreflightProbe.ts",
+    "line_ranges": [
+      "54-57"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      5
+    ],
+    "max_severity": "high",
+    "min_severity": "high",
+    "disputed_severity": false,
+    "categories": [
+      "e2e-flow"
+    ],
+    "recommendations": [
+      "Thread harness probe stubs into the precondition checker. One option: change runPreflightProbe.ts:55-57 to accept and forward a checkPrecondition callback override (or ProbeOptions-bearing variant) so the harness can inject the same stub map used for the top-level call. Alternatively, runDeployRemediation should accept an opts.spawnByProbe map and runPreflightProbe should construct that map from the same source the harness uses. Until then E-010's `expect(JSON.stringify(r7.warning)).toContain('docker-running')` (line 473) will fail on any host with Docker running."
+    ],
+    "descriptions": [
+      "Scenario E-010 (AC-2.4) requires that a Docker-not-running condition short-circuits any deploy attempt. The dispatch prompt explicitly cites cycle-3 A13 (\"Docker fail short-circuits remediation\"). Walking the harness: harness.withDockerStub({exitCode:1}) installs a SpawnFn into probeSpawnStubs.get('docker-running'); harness.callTool('runPreflightProbe', {probeId:'sandbox-manifest-reachable', remediate:true}) is then invoked to assert that remediation refuses. Inside runPreflightProbe, the manifest probe fails (real fetch), runDeployRemediation is invoked with a precondition checker `(pid) => runProbe(pid as ProbeId, {})` — passing an EMPTY ProbeOptions object, no spawn stub. So when runDeployRemediation iterates ['docker-running','sui-cli-version','sandbox-repo-present'] and calls the checker for 'docker-running', the production docker probe runs against the host's real `docker info`. On a developer machine with Docker installed and running, that probe returns pass:true, the gate continues to sui-cli-version, and the warning surfaces the WRONG probe id. Live test run confirms: `tests/harness.preflight.test.ts > E-010 > T-159` fails with `expected '...probeId\":\"sui-cli-version\"...' to contain 'docker-running'`. The harness-side stub never reaches the precondition gate — pnpm deploy-all is still NOT spawned (spawnSpy passes), but the assertion that it was the docker probe that blocked it is unprovable through this code path."
+    ],
+    "impacts": [
+      "AC-2.4's assertion that Docker failure is the cause of the deploy short-circuit is not testable through the current harness/production wiring — the precondition gate runs unstubbed probes against the real host. On any developer machine where Docker is available the test produces a false-positive deploy-blocked-but-for-the-wrong-reason. The scenario E-010 cannot reliably distinguish \"Docker fail short-circuited remediation\" from \"some other precondition happened to fail\". Cycle-3 A13's claim is structurally unverifiable without a fix."
+    ],
+    "evidence": "const deployResult = await runDeployRemediation(\n    probeResult.action,\n    (pid) => runProbe(pid as ProbeId, {}),\n  );",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R5-002"
+    ]
+  },
+  {
+    "cluster_id": "C006",
+    "title": "Output-style probe message-coverage divergence between disabled and missing-key paths",
+    "file": "mcp/server/src/outputStyle.ts",
+    "line_ranges": [
+      "33-64"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      2
+    ],
+    "max_severity": "medium",
+    "min_severity": "medium",
+    "disputed_severity": false,
+    "categories": [
+      "design"
+    ],
+    "recommendations": [
+      "Make probeOutputStyle return a warning on every !ok path. The two affected branches should return: { ok: false, warning: { kind: 'output-style-plugin-not-enabled', message: 'learning-output-style@claude-plugins-official is not enabled. Run: claude plugins enable learning-output-style@claude-plugins-official' } } (or similar). This unifies the contract and removes the need for fallback logic in callers."
+    ],
+    "descriptions": [
+      "Three distinct failure branches in probeOutputStyle return inconsistent shapes. (a) settings file unreadable (line 23-31): returns warning kind 'settings-file-missing'. (b) settings file unparseable (line 36-44): returns warning kind 'settings-file-malformed'. (c) settings is parseable but missing enabledPlugins or plugin key absent / value !== true (lines 53, 63): returns bare {ok:false} with NO warning. The bare-{ok:false} branches are exactly the most-likely real-world cases that drive E-002 (a user with a normal settings file who simply hasn't enabled the plugin), yet they produce zero diagnostic content for downstream consumers (start.ts, learningOutputStyle.ts probe). The probe in probes/learningOutputStyle.ts compensates with a hardcoded fallback string at line 14-15, but start.ts has no such fallback and silently propagates outputStyleOk:false with no associated warning."
+    ],
+    "impacts": [
+      "Inconsistent contract on the same probe interface. Downstream code paths in start.ts cannot uniformly construct a refusal message because the probe's warning may or may not exist depending on which branch fired. Encourages the kind of 'silent missing-data' bug demonstrated by R2-001."
+    ],
+    "evidence": "outputStyle.ts lines 53 and 63 both contain `return { ok: false };` with no warning attached, in contrast to lines 24-31 and 37-44 which return a warning. Scenarios affected: E-002.",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R2-003"
+    ]
+  },
+  {
+    "cluster_id": "C011",
+    "title": "E-004 sub-step 'verifySpot auto-runs after spot complete' is unimplemented in current MCP surface",
+    "file": "mcp/server/src/tools/verifySpot.ts",
+    "line_ranges": [
+      "1-1"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      3
+    ],
+    "max_severity": "medium",
+    "min_severity": "medium",
+    "disputed_severity": false,
+    "categories": [
+      "e2e-flow"
+    ],
+    "recommendations": [
+      "Either (a) add a `completeSpot` MCP tool that internally dispatches runVerifySpot and, on failure, returns a payload that includes `nextLadderRung: 1` (the suggestion the spec implies); (b) document explicitly in spec.md that the 'auto-verifySpot after spot complete' invariant is enforced by the skill body and not by the engine, and update E-004 to call verifySpot explicitly; or (c) have nextSpot, when re-called on the same spot id with the file mtime newer than the last verify, auto-run verifySpot and return the result inline. Option (b) is the cheapest and matches the cycle-5 architectural posture."
+    ],
+    "descriptions": [
+      "Scenario E-004's last 4 steps (`harness writes a syntactically broken edit into src/App.tsx lines 103-114 and signals \"spot complete\"`, `assert verifySpot is invoked automatically (without the harness explicitly calling it) and reports failure`, `assert the help-ladder offer (rung 1 hint) is surfaced as a result of the failure`) presuppose a 'spot complete' signal that auto-triggers verifySpot. There is no such signal in the MCP surface — there is no `signalSpotComplete` tool, and `nextSpot` does not auto-run verification. verifySpot only fires when the caller (Claude / harness) calls it. The cycle-5 unit suite explicitly handled rung 3's auto-verify dispatch inside requestHint, but the analogous 'student finished writing → engine auto-verifies' protocol for non-ladder spot completion is not wired anywhere. The scenario thus cannot be fully driven by harness alone; only the rung-3 auto-verify portion (which IS wired) is exercisable today."
+    ],
+    "impacts": [
+      "Coverage gap for AC-4.3 ('Verification runs after every spot completion; failure routes to the help ladder'). The cycle-5 cycle covers AC-4.3 for the rung-3 path inside requestHint, but a student who hand-writes their own edit cannot trigger the engine's verification + ladder routing without explicitly calling verifySpot. If the contract requires auto-verification on spot complete, the engine needs either a new MCP tool ('completeSpot' or a dedicated event) or the skill must instruct Claude to always call verifySpot after the student signals done — but the latter is content, not engine."
+    ],
+    "evidence": "verifySpot.ts and tools/index.ts: no auto-trigger seam — runVerifySpot is only invoked from the verifySpot tool handler and from requestHint rung 3. No 'spot-complete' or 'signalSpotComplete' tool name appears anywhere in mcp/server/src/. E-004 step 'assert verifySpot is invoked automatically (without the harness explicitly calling it)' has no matching code path outside the rung-3 dispatch.",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R3-005"
+    ]
+  },
+  {
+    "cluster_id": "C018",
+    "title": "E-011 sui-cli-version probe message diverges from spec scenario substring",
+    "file": "mcp/server/src/probes/suiCli.ts",
+    "line_ranges": [
+      "47-50"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      5
+    ],
+    "max_severity": "medium",
+    "min_severity": "medium",
+    "disputed_severity": false,
+    "categories": [
+      "e2e-flow"
+    ],
+    "recommendations": [
+      "Either (a) update the production message to drop the word `version` (`Sui CLI 1.62.0 is outside the supported range (1.63.2–1.64.1). Run: brew install sui`) so it matches the spec scenario verbatim, or (b) update scenarios.json line 269 to reference the actual production wording. Tighten T-160 to `expect(r!.message).toContain('Sui CLI 1.62.0 is outside the supported range')` (or the chosen final form) to prevent future drift."
+    ],
+    "descriptions": [
+      "Scenario E-011 (`.forge/e2e/scenarios.json` line 269) asserts the failure message contains the exact substring `\"Sui CLI 1.62.0 is outside the supported range\"`. The production probe instead emits `Sui CLI version 1.62.0 is outside the supported range (1.63.2–1.64.1). Run: brew install sui` — note the inserted word `version` between `Sui CLI` and the version number. The literal substring requested by the scenario does not appear in the message. The dispatch prompt asks me to drive `withSuiCliStub({version: '1.50.0'})`; the same wording diff applies (`Sui CLI version 1.50.0 ...`). The existing test T-160 (`tests/harness.preflight.test.ts:517`) only asserts `expect(r!.message).toContain('1.62.0')` and `'brew install sui'`, both of which pass — so the test is weaker than the scenario's stated assertion. The brew-install hint is correct (passes); the version-range hint is correct; only the exact wording differs from the spec scenario."
+    ],
+    "impacts": [
+      "If a scenario-runner literally greps the message for the spec wording (`Sui CLI 1.62.0 is outside the supported range`), the assertion will fail on the production output. Cycle-e2e-pass.sh's substring matching against scenarios.json could regress here. Either the spec or the probe message must move; the test does not currently catch the divergence."
+    ],
+    "evidence": "message: `Sui CLI version ${versionStr} is outside the supported range (1.63.2–1.64.1). Run: brew install sui`,",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R5-003"
+    ]
+  },
+  {
+    "cluster_id": "C019",
+    "title": "withSandboxRepoAbsent fixture is a documentation comment, not an enforced isolation",
+    "file": "scripts/e2e/harness.ts",
+    "line_ranges": [
+      "198-205"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      5
+    ],
+    "max_severity": "medium",
+    "min_severity": "medium",
+    "disputed_severity": false,
+    "categories": [
+      "e2e-flow"
+    ],
+    "recommendations": [
+      "Make the fixture self-sufficient. Either (a) have it remember the real HOME and assign a fresh tempdir for the lifetime of the harness (with cleanup that restores it on shutdown), or (b) have the probe read an injected homeDir from ProbeOptions and have the fixture set it. Update the comment to no longer rely on an external beforeEach contract — the fixture's contract should be self-contained."
+    ],
+    "descriptions": [
+      "Scenario E-009's pre-condition (`harness moves it aside if it exists`) is implemented as `withSandboxRepoAbsent(): No-op: the test controls HOME via beforeEach.` That works only when the caller is the existing Vitest suite (which mutates `process.env.HOME = tempHome` in beforeEach at tests/harness.preflight.test.ts:73). If the e2e gate or a future scenario runner invokes `bootHarness` outside that fixture (for instance from cycle-e2e-pass.sh directly, or from a different test file that doesn't touch HOME), the probe will read the developer's real `~/workspace/deepbook-sandbox`. On many developer machines that directory exists, so E-009 silently turns into a passing probe and the negative case is never exercised. The harness method's name implies it actively stages the absent state, but it does nothing."
+    ],
+    "impacts": [
+      "False-pass risk for E-009 across runners. The fixture's name (`withSandboxRepoAbsent`) reads as an active setter but the implementation is a stub. A scenario runner that trusts the method name but does not happen to also clobber HOME will exercise the developer's real sandbox checkout (or none) — non-hermetic. AC-2.2 coverage becomes environment-dependent."
+    ],
+    "evidence": "async withSandboxRepoAbsent(): Promise<void> {\n      // No-op: the test controls HOME via beforeEach.\n    },",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R5-004"
+    ]
+  },
+  {
+    "cluster_id": "C001",
+    "title": "runStart consumes registry warnings with no projectRoot/paths fallback when paths/ is absent",
+    "file": "mcp/server/src/tools/start.ts",
+    "line_ranges": [
+      "19-87",
+      "54-68",
+      "19-36"
+    ],
+    "agreement_count": 3,
+    "reviewers": [
+      1,
+      3,
+      6
+    ],
+    "max_severity": "low",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "e2e-flow"
+    ],
+    "recommendations": [
+      "Keep the harness expectation explicit: drive runPreflightProbe(probeId) for each of the 8 PROBE_ORDER ids and aggregate, rather than reading start.preflight (which is a placeholder envelope). No code change required for E-001 to pass given this aggregation step. Optionally note in the skill body that 'preflight pass' = all 8 individual probes returning pass:true in sequence.",
+      "Keep — scenario passes at runtime. See R3-002 for the recovery-flow defect this scenario does NOT exercise but the spec implies in step 4.",
+      "Confirm whether the registry should scan `${plugin_root}/paths` (per architecture) or `${project_root}/paths` (per current code). If plugin-rooted, runStart should use a CLAUDE_PLUGIN_ROOT-anchored resolver; otherwise document the project-rooted convention in spec.md."
+    ],
+    "descriptions": [
+      "Drove scenario E-001 via the in-process MCP harness against the production paths/01-orderbook-viewer manifest. Sequence: assert state.json absent at start, call start (returns outputStyleOk=true and the registry's PathInfo for 01-orderbook-viewer with no warnings), call selectPath which returns personalizationPrompts of exactly 2 entries (poll_interval_ms with range 1000-30000 default 3000, pool_subset enum [both, DEEP_SUI, SUI_USDC] default both), call setPersonalization with values:{} (the 'Use defaults' equivalent, which the SDK schema explicitly accepts and which writes the merged defaults into state), call nextSpot which returns phase.id='p1-bootstrap' spot.id='p1-spot-1' target_file='src/App.tsx' target_range='39-58' with doc_links resolved as path entries and rungs object pointing at rungs/p1-spot-1/{hint,reference,auto}.md. After nextSpot, state.json exists at <project>/.sui-deepbook-course/state.json with cursor.phase_id='p1-bootstrap' and cursor.spot_id='p1-spot-1'. The substituted prompt for the default pool_subset='both' literally reads 'You are configuring for pool: both', so the {{ pool_subset }} substitution path is exercised even on the defaults branch. Note: the scenario's step 4 ('assert all 8 preflight probes report pass') is not satisfied by the start tool itself — start.ts returns preflight:{skipped:true,reason:'cycle-1'}. The skill is responsible for iterating the 8 probes via separate runPreflightProbe calls (documented in MCP Tools section). That is consistent with the spec's communication pattern but worth knowing for the harness implementer driving the cycle-e2e-pass script: the assertion needs to be made against 8 individual runPreflightProbe responses, not the start envelope. Scenario covered: E-001.",
+      "Scenario E-006 walked end-to-end via the in-process MCP harness: seeded <projectRoot>/.sui-deepbook-course/state.json with truncated invalid JSON, called the start tool through bootHarness, observed warnings[0]={kind:'state-corrupt', archivedTo:<absolute path>, message:<contains 'archived'>}, the archive file existed on disk, and start.state was null. The byte-for-byte archive guarantee from state.test.ts T-048 holds end-to-end. AC-7.2 minimum surface (corrupt classification + archive + non-null path) is met.",
+      "While exercising E-013 I noticed the start tool always derives pathsRoot from projectRoot ('paths' under the student project) — but the spec architecture (line 167-180 of spec.md and the path-selection flow) treats the path registry as PLUGIN-rooted, not project-rooted. Failure Modes line 430 says 'paths/ directory absent ⇒ stop: \"Plugin packaging error: paths/ directory missing.\"' For both E-012 and E-013 the harness happens to write into <projectRoot>/paths because that is what runStart reads, but if a real install ever has plugin-root paths/ vs project-root paths/, the engine reads the wrong tree. The empty case returned 'empty-paths-dir' from a project-root paths/ even though paths/01-orderbook-viewer is shipped at plugin root. Scenario ids: E-012, E-013."
+    ],
+    "impacts": [
+      "E-001 is walkable end-to-end against the deliverable. Personalization defaulting via empty values is observable; state.json persistence is observable; doc_links surface as structured path entries. The acceptance criteria in covers_contract (AC-1.2 outputStyleOk gate, AC-2.1 preflight pass/fail shape via runPreflightProbe, AC-4.2 doc_link resolution + wait state, AC-6.1/6.2 personalization prompt + Use defaults, AC-7.4 absent state file = first run) are all observable in the deliverable, with the caveat that AC-2.1 lives in runPreflightProbe (not start) — the skill must walk the probes individually.",
+      "Scenario E-006 confirms the visible side-effects required by AC-7.2 happen exactly as the spec says.",
+      "Out of strict review scope, but worth flagging: the registry path resolution may be wired to the wrong root. If the production deployment expects the plugin's bundled paths/, students with an empty project tree would always see 'no paths installed' instead of the shipped orderbook-viewer path. The current scenarios do not catch this because they construct the wired-up directory layout manually."
+    ],
+    "evidence": "scenario E-006: warnings[0].kind==='state-corrupt' && warnings[0].archivedTo is a real path; fs.existsSync(archivedTo)===true; archived bytes byte-equal seeded corrupt input.",
+    "confidence_spread": [
+      "high",
+      "low"
+    ],
+    "source_ids": [
+      "R1-001",
+      "R3-001",
+      "R6-005"
+    ]
+  },
+  {
+    "cluster_id": "C002",
+    "title": "Malformed-path-json warning message lacks the 'skipped' / 'parse error' phrasing E-012 asserts",
+    "file": "mcp/server/src/registry.ts",
+    "line_ranges": [
+      "22-153",
+      "82-93",
+      "41-51",
+      "86-92",
+      "44-49"
+    ],
+    "agreement_count": 2,
+    "reviewers": [
+      1,
+      6
+    ],
+    "max_severity": "low",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "e2e-flow"
+    ],
+    "recommendations": [
+      "Optionally extend the harness to also walk phases.json validation failures (already covered by T-040/T-041 unit tests). No change needed for E-005 itself.",
+      "No code change required for the runtime guarantee. See R6-003 for a separate finding about the human-readable wording.",
+      "No code change required for the runtime guarantee. See R6-004 about the literal wording promised by the spec.",
+      "Reword the malformed-path-json message to 'Skipped <path>: parse error: <detail>' (and the symmetric missing-/invalid- variants). This satisfies both the strict scenario-text reading and the looser kind-regex reading without changing the wire schema.",
+      "Either (a) update the message to 'No paths installed: <path>' so producer matches spec wording, or (b) leave the message verbose and add a short user_message field to the empty-paths-dir warning whose value is the literal canned string 'no paths installed'. Option (a) is the smaller surface change."
+    ],
+    "descriptions": [
+      "Drove scenario E-005 by writing a synthetic paths/04-fake-path/path.json (slug=04-fake-path, valid schema with one personalization option and pnpm build command) and a paths/04-fake-path/phases.json (one phase 'p1' with one stub spot 's1') alongside the real 01-orderbook-viewer. Calling start returned a paths array with both entries, sorted slugs equal to ['01-orderbook-viewer','04-fake-path'], and an empty warnings array — confirming the registry surfaces the new path purely from a directory scan with no plugin code changes (AC-3.1). selectPath('04-fake-path') returned ok:true with personalizationPrompts containing the single declared option (poll_interval_ms with range from path.json), confirming the registry → selectPath integration works for any well-formed slug. The scanRegistry implementation reads paths/<slug>/path.json, validates schema, then reads paths/<slug>/phases.json and validates schema; if either is malformed the path is skipped with a structured warning instead of crashing — independently verified against the existing T-022/T-040/T-041 contract tests, all green. Scenario covered: E-005.",
+      "Drove scenario E-012 by setting up a temp project root with paths/01-good (well-formed) and paths/99-broken/path.json (trailing-comma JSON), then invoking runStart. The registry emitted a single warning with kind 'malformed-path-json' (matches the scenario regex /malformed-path-json|invalid-path-json/i), the warning carried the absolute path of the bad file, the broken slug was excluded from start.paths, and the good path 01-good was returned. Scenario id: E-012.",
+      "Drove scenario E-013 by setting up a temp project root containing an empty paths/ directory and invoking runStart. The registry returned paths: [] and exactly one warning with kind 'empty-paths-dir'. No exception was raised, no stack trace was surfaced, and outputStyleOk was true on the host (settings already enabled). Scenario id: E-013.",
+      "Scenario E-012's expectation reads 'assert the registry reports \\\"skipped paths/99-broken/path.json: parse error\\\" with the file path'. The actual message is 'Failed to parse <abs path>: <parser detail>'. The kind discriminator is correct ('malformed-path-json'), and the absolute file path is present, but the literal substrings 'skipped' and 'parse error' are absent. Whether this trips an assertion depends on how the cycle-e2e-pass.sh harness matches: the dimension-prompt instructs me to match on the kind regex, which passes. A stricter harness that greps the message text would not. Scenario id: E-012.",
+      "AC-3.3 and scenario E-013 both promise an explicit 'no paths installed' message. The registry emits kind 'empty-paths-dir' with message 'Paths directory exists but contains no path subdirectories: <path>'. Semantically equivalent, lexically different. The kind-based assertion holds; a literal-text assertion against 'no paths installed' would not. The runStart envelope does not carry a separately composed user-facing message; the skill or command body has to translate the warning kind into UX copy, and there is no such translator on disk yet. Scenario id: E-013."
+    ],
+    "impacts": [
+      "Drop-in path extensibility (Vision item 8) is verified at the e2e seam. AC-3.1 holds: a new paths/<slug>/ directory with valid JSON makes the slug appear in selection and selectable, with no source-code edits. This is the load-bearing parametricity proof for future path content drops (02-fee-rebate-swap, 03-dca-vault).",
+      "Confirms AC-3.2 holds for the wire shape: one malformed sibling does not crash the registry and does not poison the discovery of other valid paths. cycle-e2e-pass.sh will see the E-012 marker.",
+      "Confirms AC-3.3 at the wire level: the engine handles the empty-registry case without crashing and surfaces a structured warning the rendering layer can convert into a student-facing message.",
+      "If a future reviewer or harness greps the literal phrase 'skipped' or 'parse error' in the message (per the scenario wording), this scenario will appear to fail despite the registry behaving correctly. It also leaks a small UX gap: the student-facing surface should make clear the path was skipped, not just that parsing failed.",
+      "If the rendering layer just echoes warning.message to the student, the spec's promised phrasing never reaches them. cycle-e2e-pass.sh enforcement of AC-3.3 wording is currently dependent on a layer that does not exist; the gap will surface the moment the skill body or course-engine prose grep-checks for 'no paths installed'."
+    ],
+    "evidence": "startResult.paths.map(p => p.slug).sort() === ['01-orderbook-viewer','04-fake-path']; selectPath('04-fake-path') => {ok:true, personalizationPrompts:[{name:'poll_interval_ms',...}]} (scenario E-005)",
+    "confidence_spread": [
+      "high",
+      "medium"
+    ],
+    "source_ids": [
+      "R1-002",
+      "R6-001",
+      "R6-002",
+      "R6-003",
+      "R6-004"
+    ]
+  },
+  {
+    "cluster_id": "C014",
+    "title": "E-007 real-deploy assertion ('harness invokes pnpm deploy-all from sandbox/') is inverted under the stub branch",
+    "file": ".forge/e2e/scenarios.json",
+    "line_ranges": [
+      "176-189"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      4
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "Tighten E-007 step 4 to either 'assert the manifest probe's returned action carries cwd=~/workspace/deepbook-sandbox/sandbox and command=`pnpm deploy-all --quick`' (stub-friendly) or split into E-007a (stub) and E-007b (real, akin to E-008) and reserve the spawn-observation assertion for the real variant."
+    ],
+    "descriptions": [
+      "Scenario E-007 step 4 reads 'assert the harness invokes `pnpm deploy-all --quick` from ~/workspace/deepbook-sandbox/sandbox/'. But E-007's preconditions also state the harness pre-stubs deploy-all, and the implementation's stub path (E2E_DEPLOY_STUB=1) deliberately never spawns a subprocess at all (runStubDeploy returns synchronously without touching child_process). So 'assert the harness invokes pnpm deploy-all from sandbox/' under the stub semantics either has to mean (a) 'assert the action.cwd field carries the sandbox path' (which the manifest probe does set on the action it returns), or (b) be reframed against a non-stub harness fixture. Today the assertion is ambiguous: a strict reader will fail E-007 because no subprocess invocation is observable, while a generous reader will pass it because the action.cwd is correct."
+    ],
+    "impacts": [
+      "Ambiguous scenario step language. Different reviewers will interpret 'assert harness invokes' differently, leading to inconsistent verdicts on E-007. This is a documentation-quality issue with concrete review-pass implications."
+    ],
+    "evidence": "Scenario E-007 step 4: 'assert the harness invokes `pnpm deploy-all --quick` from ~/workspace/deepbook-sandbox/sandbox/'. runStubDeploy at manifest.ts lines 107-114 never spawns. Manifest probe at lines 34-39 sets action = { kind: 'shell', command: 'pnpm deploy-all --quick', cwd: getSandboxCwd(), timeoutMs: DEPLOY_TIMEOUT_MS }.",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R4-005"
+    ]
+  },
+  {
+    "cluster_id": "C020",
+    "title": "ProbeResult lacks the failure-class discriminator the spec advertises",
+    "file": "mcp/server/src/preflight.ts",
+    "line_ranges": [
+      "19-23"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      5
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "e2e-flow"
+    ],
+    "recommendations": [
+      "Add an explicit `class: 'auto-recoverable' | 'guided' | 'stop'` field on ProbeResult and have each probe set it (Docker => stop; sui-cli => guided; manifest => auto-recoverable). Update scenarios E-010/E-011 to assert on `r.class === 'stop' / 'guided'` instead of (or in addition to) message substring. Low severity because the current proxy works for the three scenarios I own; flagging for cycle-spec alignment."
+    ],
+    "descriptions": [
+      "Spec line 86 promises probe failures are 'classified as auto-recoverable, guided, or stop.' Scenarios E-010 and E-011 explicitly assert the failure class is 'stop' / 'guided stop'. The ProbeResult interface carries only `pass`, `message`, optional `action` — no `class` / `kind` discriminator. Today the engine infers the class from the presence of `action` (action present => guided/auto-recoverable; action absent => stop). That works for E-010 (Docker probe emits no action) and E-011 (sui-cli probe emits no action), but the inference is implicit and not asserted by any test. A future probe that returns a non-shell action or that returns no action for an auto-recoverable case would silently misclassify."
+    ],
+    "impacts": [
+      "Scenarios E-010/E-011 cannot make a structural assertion about failure class — they can only check message wording. AC-2.4 / AC-2.5 lean on the presence/absence of `action` as a proxy for `stop` vs `guided`, which is a fragile contract that the spec does not actually require. Future probe authors may break the implicit invariant without any test fail."
+    ],
+    "evidence": "export interface ProbeResult {\n  pass: boolean;\n  message: string;\n  action?: ShellAction;\n}",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R5-005"
+    ]
+  },
+  {
+    "cluster_id": "C007",
+    "title": "E-003 passes: sui-pilot disabled produces exact remediation; flip-and-re-probe recovers",
+    "file": "mcp/server/src/probes/suiPilot.ts",
+    "line_ranges": [
+      "6-57"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      2
+    ],
+    "max_severity": "info",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "e2e-flow"
+    ],
+    "recommendations": [
+      "No change needed. (Optional tightening: probe message is identical for the 'malformed JSON' and 'plugin disabled' branches — could differentiate for diagnostics, but the spec calls for the canonical remediation in both cases, so this is by design.)"
+    ],
+    "descriptions": [
+      "Scenario E-003 walks the sui-pilot disabled path with guided remediation. I drove the harness with HOME pointed at a temp dir whose settings.json has 'sui-pilot@local': false, called runPreflightProbe('sui-pilot-enabled'), then flipped the setting to true and re-probed. Run 1 returned pass:false with message 'sui-pilot plugin is not enabled. Run: claude plugins enable sui-pilot' (containing the exact remediation string the spec calls out and that AC-2.1 requires). Run 2, after re-enabling, returned pass:true with message 'sui-pilot plugin is enabled.' This is the documented happy path of the scenario. The tests T-154 (harness.preflight.test.ts) corroborate this in the unit suite and pass cleanly. The probe correctly tolerates absent/malformed settings.json (early-return false with the same remediation), and matches any 'sui-pilot@*' key set to true (line 45-47), which gracefully handles the source-suffix variation noted by the spec ('sui-pilot@<source>'). The 'halts before path selection' part of the assertion is a skill-layer protocol concern, not the MCP tool's responsibility, and matches the architecture pattern documented in spec § Lesson Flow."
+    ],
+    "impacts": [
+      "E-003 scenario passes end-to-end. AC-2.1 satisfied for this probe. No defect."
+    ],
+    "evidence": "E-003: harness driver returned `pass: false, message: 'sui-pilot plugin is not enabled. Run: claude plugins enable sui-pilot', contains \"claude plugins enable sui-pilot\": true` on disabled run; `pass: true, message: 'sui-pilot plugin is enabled.'` after re-enabling. Existing test T-154 in tests/harness.preflight.test.ts asserts the same and passes.",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R2-002"
+    ]
+  },
+  {
+    "cluster_id": "C009",
+    "title": "E-016 schema-version mismatch is a guided stop with no archive emitted",
+    "file": "mcp/server/src/state.ts",
+    "line_ranges": [
+      "62-70"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      3
+    ],
+    "max_severity": "info",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "e2e-flow"
+    ],
+    "recommendations": [
+      "Keep — scenario passes; behaviour matches spec ## Failure Modes 'Schema version mismatch ⇒ guided stop, not corruption recovery'."
+    ],
+    "descriptions": [
+      "Scenario E-016 walked end-to-end via the harness: seeded state.json with valid JSON whose schema_version=999, called start, observed warnings[0]={kind:'state-schema-mismatch', foundVersion:999, message:contains 'incompatible' AND 'migration'}, and confirmed (a) zero `state.corrupt-*.json` archives in .sui-deepbook-course/, (b) canonical state.json byte-for-byte unchanged, (c) startResult.state===null. AC-7.3's distinction from corruption recovery (E-006) is preserved: corrupt archives, schema-mismatch does not. start.ts L70-78 dispatches the schema-mismatch branch into the warnings array without invoking any archive write."
+    ],
+    "impacts": [
+      "Scenario E-016 confirms a unknown schema version is a guided stop, distinct from the corruption recovery path, with no silent fresh state created and no archive churn."
+    ],
+    "evidence": "scenario E-016: warnings.find(w=>w.kind==='state-schema-mismatch').foundVersion===999; fs.readdirSync(stateDir).filter(n=>n.startsWith('state.corrupt-')).length===0; canonical bytes preserved.",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R3-003"
+    ]
+  },
+  {
+    "cluster_id": "C010",
+    "title": "E-004 full help-ladder traversal: hint→reference→auto-finish advances cursor",
+    "file": "mcp/server/src/tools/requestHint.ts",
+    "line_ranges": [
+      "75-322"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      3
+    ],
+    "max_severity": "info",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "e2e-flow"
+    ],
+    "recommendations": [
+      "Keep — scenario passes. One adjacent observation that is NOT a defect for this scenario but worth surfacing to the design reviewer: `requestHint` does NOT itself check that the prior verifySpot failed before letting rung 1 fire (canAdvanceRung only gates rung 2 on hint_used and rung 3 on reference_shown). The student can request a hint without ever attempting the spot. The spec's 'Mixing rungs collapses the pedagogy' invariant is enforced by the skill, not the tool — which is acceptable but should be documented."
+    ],
+    "descriptions": [
+      "Scenario E-004 walked end-to-end via the harness with withVerifyStub. Sequence: start → selectPath('01-orderbook-viewer') → setPersonalization({}) → nextSpot (returned phase p1-bootstrap, spot p1-spot-1, target_file src/App.tsx, target_range 39-58) → withVerifyStub({pass:false}) → verifySpot returned pass:false → requestHint(rung:1) returned ok:true with non-empty payload, persisted ladder.p1-spot-1.hint_used=true → requestHint(rung:2) returned ok:true, persisted reference_shown=true → withVerifyStub({pass:true}) → requestHint(rung:3) returned ok:true with autoVerifyResult.pass=true and autoVerifyResult.advanced=true → final state.json shows ladder.p1-spot-1 = {hint_used:true, reference_shown:true, auto_completed:true, auto_write_attempted:true} and cursor advanced to phase_id 'p2-polling', spot_id 'p2-spot-1'. AC-5.1 (rung gating), AC-5.2 (state mutation), AC-5.3 (cursor advances on rung-3 verify pass), AC-5.4 (auto_completed never cleared) all hold on the live wire."
+    ],
+    "impacts": [
+      "Scenario E-004 confirms the load-bearing pedagogy primitive works end-to-end: the help ladder is opt-in, gated, observable in state, and rung 3 advances the cursor only when verification passes after the auto-write."
+    ],
+    "evidence": "scenario E-004: state.ladder['p1-spot-1']={hint_used:true,reference_shown:true,auto_completed:true,auto_write_attempted:true}; cursor.spot_id='p2-spot-1' after rung-3; bak file .sui-deepbook-course/snapshots/p1-spot-1.bak created; r3.autoVerifyResult.advanced===true.",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R3-004"
+    ]
+  },
+  {
+    "cluster_id": "C012",
+    "title": "E-007 deploy-stub path passes runtime: stub returns pass:false with pnpm down hint and never spawns",
+    "file": "mcp/server/src/probes/manifest.ts",
+    "line_ranges": [
+      "76-114",
+      "116-217"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      4
+    ],
+    "max_severity": "info",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "e2e-flow"
+    ],
+    "recommendations": [
+      "No action required for E-007 itself; record runtime evidence in the e2e log and proceed.",
+      "Capture this runtime evidence in the e2e log and treat E-008 as covered. Note that the real deploy is a 2.5-minute operation; cycle-e2e-pass.sh should keep the per-scenario timeout above 4-5 minutes."
+    ],
+    "descriptions": [
+      "Drove scenario E-007 end-to-end through the production tool path runPreflightProbe('sandbox-manifest-reachable', { remediate: true }) with E2E_DEPLOY_STUB=1 and a no-op spawn injected via runDeployRemediation's opts. Result was {pass: false, message: '[stub] deploy-all ran but manifest is not up. Run: pnpm down to clean up.', logs: ['[stub] pnpm deploy-all --quick started', '[stub] deploy-all exited 0']}. The fake spawn function was never invoked, confirming the stub branch (E2E_DEPLOY_STUB === '1') short-circuits before any real subprocess. Path-selection prompt is not rendered by this tool path (the engine-level halt happens upstream in the skill, which is out of scope for this CLI scenario harness). Acceptance criteria for E-007 satisfied at the harness level.",
+      "Drove scenario E-008 end-to-end with Docker confirmed up (docker info OK) and sandbox checkout present at ~/workspace/deepbook-sandbox/sandbox/. Baseline manifest probe failed as expected. Invoked runDeployRemediation (real-mode, no E2E_DEPLOY_STUB) and the production code spawned `pnpm deploy-all --quick` at the correct cwd. Deploy completed in 151.3s; final result was {pass: true, message: 'Sandbox manifest is now reachable.'}. Post-run curl http://localhost:9009/manifest returned a valid JSON manifest carrying network/packages/pools data. Then `pnpm down` ran from the sandbox directory and cleanly removed all containers/volumes/networks. Final manifest probe confirmed unreachable post-teardown. Scenario E-008 acceptance criteria satisfied at the harness level. Output ended with the line '[WARN] The Deepbook Sandbox is running. To stop it run: pnpm down' which is the exact teardown hint the scenario expects to be referenced."
+    ],
+    "impacts": [
+      "E-007 is operational. The orchestrator can rely on the deploy-stub fixture to drive sandbox-unreachable-after-deploy negative-path coverage without booting Docker.",
+      "E-008 is operational on this machine. The Docker-gated slow-integration path works end-to-end against a real DeepBook sandbox."
+    ],
+    "evidence": "Scenario E-008. Real deploy logs (excerpt): 'DeepBook Sandbox Ready! DEEP/SUI Pool 0x2e8c876989...; SUI/USDC Pool 0x034336ec91...; SUI Margin Pool 0x7fcb6d18c1...; USDC Margin Pool 0x9d1b6be397...; Deployment File /Users/alilloig/workspace/deepbook-sandbox/sandbox/deployments/localnet.json; [WARN] The Deepbook Sandbox is running. To stop it run: pnpm down'. Tool result: {pass: true, message: 'Sandbox manifest is now reachable.'} after 151.3s. Post-run manifest GET returned 200 with valid JSON. Teardown: pnpm down removed all containers and volumes cleanly.",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R4-001",
+      "R4-003"
+    ]
+  },
+  {
+    "cluster_id": "C015",
+    "title": "E-011 dispatch prompt and spec scenario disagree on stub version (1.50.0 vs 1.62.0)",
+    "file": ".forge/e2e/scenarios.json",
+    "line_ranges": [
+      "264-272"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      5
+    ],
+    "max_severity": "info",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "e2e-flow"
+    ],
+    "recommendations": [
+      "Pick one version (recommend 1.62.0 since it is in scenarios.json + the existing test) and have the dispatch prompts reference that. Update the dispatch template (or the README of the e2e runner) so future reviewers do not see a mismatch."
+    ],
+    "descriptions": [
+      "Dispatch instructed me to drive `withSuiCliStub({version: '1.50.0'})`; the scenario file (E-011 step 2) asserts the failure message contains `\"Sui CLI 1.62.0 is outside the supported range\"`. Both versions are below MIN_VERSION [1,63,2] and both yield pass:false with the same message shape, so functionally either drives the same probe path. But the test (T-160) is hard-coded to 1.62.0; the dispatch's 1.50.0 would change the asserted substring. Whichever version is canonical, only one should appear across spec/scenarios/test/dispatch. Treating this as info because it does not change scenario behavior, only string assertions."
+    ],
+    "impacts": [
+      "Risk of spec/dispatch/test drift if cycle-e2e-pass.sh greps a different version literal than the scenario runner. Currently absorbed by the test using 1.62.0 and the dispatch's 1.50.0 producing structurally identical results."
+    ],
+    "evidence": "\"assert preflight probe #4 fails with \\\"Sui CLI 1.62.0 is outside the supported range\\\"\"",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R5-006"
+    ]
+  },
+  {
+    "cluster_id": "C016",
+    "title": "E-009 sandbox-repo-present probe passes scenario assertion",
+    "file": "mcp/server/src/probes/sandboxRepo.ts",
+    "line_ranges": [
+      "9-28"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      5
+    ],
+    "max_severity": "info",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "e2e-flow"
+    ],
+    "recommendations": [
+      "Accept E-009 as passing for the e2e gate. Reference scenario id E-009 in the cycle-e2e-pass.sh greppable output."
+    ],
+    "descriptions": [
+      "Scenario E-009 requires the probe to fail with an exact clone command when ~/workspace/deepbook-sandbox is absent. Walking the harness path: bootHarness -> runPreflightProbe('sandbox-repo-present', {}) -> runProbe -> probeSandboxRepoPresent. The probe calls os.homedir() (which honors process.env.HOME on macOS, confirmed via `node -e \"process.env.HOME='/tmp/fake'; console.log(require('os').homedir())\"` => /tmp/fake), stats `${HOME}/workspace/deepbook-sandbox`, catches ENOENT, and returns `pass: false` with the message `Sandbox repo not found. Clone it with: git clone --recurse-submodules https://github.com/MystenLabs/deepbook-sandbox.git ~/workspace/deepbook-sandbox`. The exact substring required by E-009 step 3 (`git clone --recurse-submodules https://github.com/MystenLabs/deepbook-sandbox.git ~/workspace/deepbook-sandbox`) is contained verbatim. Existing test T-158 in tests/harness.preflight.test.ts confirms this end-to-end (1 passed). Engine halts before deploy: the probe produces no `action` field, so when E-009 walks the docker-#7 sequence the precondition gate in runDeployRemediation refuses to spawn pnpm deploy-all (verified by spawnSpy assertion in T-158)."
+    ],
+    "impacts": [
+      "Scenario E-009 (AC-2.2) is covered by production probe + existing test. No remediation required for this scenario itself — but see R5-004 for a fixture concern that affects external scenario runners."
+    ],
+    "evidence": "Sandbox repo not found. Clone it with: ${CLONE_COMMAND}",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R5-001"
+    ]
+  }
+]

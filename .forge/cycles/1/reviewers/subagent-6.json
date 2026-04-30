@@ -1,0 +1,67 @@
+[
+  {
+    "id": "R6-001",
+    "title": "path.json read via readFileSync follows symlinks without bound check",
+    "severity": "low",
+    "category": "security",
+    "file": "mcp/server/src/registry.ts",
+    "line_range": "76-84",
+    "description": "scanRegistry uses fs.readFileSync(pathJsonFile, 'utf8') where pathJsonFile is path.join(scanRoot, entry.name, 'path.json'). Although entry.name is a basename (no '../' traversal possible from a Dirent), path.json itself can be a symbolic link pointing anywhere on disk, including ~/.ssh/id_rsa or /etc/passwd. fs.readFileSync follows symlinks. There is no fs.realpath or stat check confirming the resolved target stays within scanRoot.",
+    "impact": "An attacker who can write a single file inside any paths/<slug>/ dir (i.e. anyone with repo-write access — already trusted) could place a symlink at path.json. The ensuing JSON.parse would fail and surface a 'malformed-path-json' warning containing the absolute path of the offending file (not its contents), so direct exfiltration is bounded. The realistic risk is denial-of-service via a symlink to /dev/zero or a multi-GB file, since there is no size cap before readFileSync (see R6-002).",
+    "recommendation": "Either fs.lstat(pathJsonFile) and skip with a warning if isSymbolicLink() returns true, or fs.realpathSync and assert the resolved path starts with the canonicalized scanRoot. Given the trusted-dev-tool context this is genuinely low priority, but the check is a 5-line addition.",
+    "evidence": "raw = fs.readFileSync(pathJsonFile, 'utf8');",
+    "confidence": "medium"
+  },
+  {
+    "id": "R6-002",
+    "title": "Unbounded readFileSync on path.json and settings.json enables OOM",
+    "severity": "low",
+    "category": "security",
+    "file": "mcp/server/src/registry.ts",
+    "line_range": "76",
+    "description": "Both registry.ts (line 76) and outputStyle.ts (line 22) read attacker-influenceable JSON files with fs.readFileSync(file, 'utf8') and no maxFileSize / fs.statSync precheck. JSON.parse is then run on the entire string. A maliciously placed multi-gigabyte path.json or ~/.claude/settings.json (or a symlink to /dev/zero) would inflate Node's heap until the process is OOM-killed.",
+    "impact": "MCP server crash, no further course functionality until restart. Locally exploitable only by someone who can already write the relevant files (already trusted in a dev environment), so this is a robustness concern rather than an exploit primitive. Worth flagging because cycle 4+ may add untrusted-path import flows that inherit the same code path.",
+    "recommendation": "Before readFileSync, fs.statSync(file) and reject with a structured warning if size > some sane limit (e.g. 1 MiB for path.json, 256 KiB for settings.json). This is cheap defense-in-depth and forward-compatible with future untrusted-input flows.",
+    "evidence": "raw = fs.readFileSync(pathJsonFile, 'utf8');",
+    "confidence": "medium"
+  },
+  {
+    "id": "R6-003",
+    "title": "outputStyle warning leaks absolute homedir path back to MCP caller",
+    "severity": "info",
+    "category": "security",
+    "file": "mcp/server/src/outputStyle.ts",
+    "line_range": "23-44",
+    "description": "Both error branches of probeOutputStyle embed the resolved settingsPath (which contains os.homedir(), e.g. /Users/alilloig/.claude/settings.json) in the warning.message field. That message is JSON-stringified into the start tool response and rendered into the Claude transcript by the course-engine skill.",
+    "impact": "On local single-user systems this is non-information — the user already knows their own homedir. On shared/CI machines, or when a transcript is shared publicly (gist, screenshot, bug report), the absolute homedir reveals the OS account name. Not an A13 violation (A13 is about *reading from* the wrong place; this is about *what we echo back*). Cycle 1 contract does not constrain warning verbosity, so this is informational only.",
+    "recommendation": "Optional: replace the absolute path in the user-facing message with a relative or symbolic form ('~/.claude/settings.json') and keep the absolute path in a separate debug-only field. No action required for cycle 1.",
+    "evidence": "message: `Settings file not found at ${settingsPath}`,",
+    "confidence": "high"
+  },
+  {
+    "id": "R6-004",
+    "title": "runStart accepts arbitrary projectRoot without absolute-path enforcement",
+    "severity": "info",
+    "category": "security",
+    "file": "mcp/server/src/tools/start.ts",
+    "line_range": "14-17",
+    "description": "The tool's zod schema declares projectRoot as z.string() with the description 'Absolute path to the project root', but neither the schema nor runStart enforces path.isAbsolute(projectRoot). A relative projectRoot like '../../../etc' would be path.join'd with 'paths' and resolved against the MCP server's CWD at the time of invocation, potentially scanning a directory outside the intended project. The blast radius is bounded — scanRegistry only reads path.json files inside the chosen root and emits warnings, so the worst case is a confused-deputy disclosure of any path.json files reachable from the resolved location.",
+    "impact": "Negligible in cycle 1 — the only caller is the course-engine skill, which passes the actual project root. Becomes load-bearing in later cycles if more tools are added that act on projectRoot (e.g. preflight shell actions in cycle 2+ per A14's wording).",
+    "recommendation": "Add z.string().refine((p) => path.isAbsolute(p), { message: 'projectRoot must be absolute' }) to the start tool schema. Cheap, non-breaking, and prevents an entire class of CWD-confusion bugs in future cycles.",
+    "evidence": "projectRoot: z.string().describe('Absolute path to the project root'),",
+    "confidence": "high"
+  },
+  {
+    "id": "R6-005",
+    "title": "A13 and A14 compliance confirmed by source review",
+    "severity": "info",
+    "category": "security",
+    "file": "mcp/server/src/outputStyle.ts",
+    "line_range": "1-64",
+    "description": "Affirmative finding for the consolidator: outputStyle.ts contains zero references to CLAUDE_OUTPUT_STYLE, process.env (any key), process.ppid, /proc/, systemPrompt, system_prompt, getppid, or parent-process inspection. The single filesystem read is path.join(os.homedir(), '.claude', 'settings.json'). start.ts contains no 'shell' literal, no child_process import, and no dynamic kind construction; the returned shape is statically { outputStyleOk, preflight, paths, state, warnings }. plugin.json's mcpServers entry is { command: 'node', args: ['mcp/server/dist/index.js'], env: {} } — no shell wrapper, no env injection vector, no user-controlled string interpolated into the launch command.",
+    "impact": "A13 and A14 hold for the cycle 1 deliverable. No critical or high security findings.",
+    "recommendation": "None — record the verification result so the consolidator can mark A13/A14 as satisfied without re-deriving it.",
+    "evidence": "const settingsPath = path.join(os.homedir(), '.claude', 'settings.json');",
+    "confidence": "high"
+  }
+]

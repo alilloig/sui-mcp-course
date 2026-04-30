@@ -1,0 +1,65 @@
+{
+  "phases": [
+    {
+      "id": "p1-bootstrap",
+      "title": "Phase 1: Manifest → SDK Config",
+      "explainer_md": "phases/p1-bootstrap.md",
+      "spots": [
+        {
+          "id": "p1-spot-1",
+          "title": "Wire the DeepBook SDK client from the deployment manifest",
+          "target_file": "src/App.tsx",
+          "target_range": "39-58",
+          "prompt": "In `src/App.tsx` lines 39–58, implement the three helper functions (`packageIds`, `coinMap`, `poolMap`) that extract DeepBook SDK config from the sandbox deployment manifest, and the `useMemo` hook that constructs the `SuiGrpcClient` extended with `deepbook(...)`. Use {{ pool_subset }} as the set of pools to wire. The manifest shape is defined by the `Manifest` interface above. Refer to the doc links for PTB inputs/results and the gRPC client API.",
+          "verification": {
+            "mode": "compile",
+            "command": "pnpm build"
+          },
+          "rungs": {
+            "hint_md": "rungs/p1-spot-1/hint.md",
+            "reference_md": "rungs/p1-spot-1/reference.md",
+            "auto_write_md": "rungs/p1-spot-1/auto.md"
+          },
+          "doc_links": [
+            ".sui-docs/develop/transactions/ptbs/inputs-and-results.mdx",
+            ".ts-sdk-docs/sui/clients/grpc.mdx"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "p2-polling",
+      "title": "Phase 2: Order Book Polling",
+      "spots": [
+        {
+          "id": "p2-spot-1",
+          "title": "TBD in cycle 5+",
+          "target_file": "src/App.tsx",
+          "target_range": "60-145",
+          "prompt": "TBD in cycle 5+ — Phase 2 spot 1 will cover the polling useEffect that calls midPrice and getLevel2TicksFromMid on the SDK client.",
+          "verification": {
+            "mode": "compile",
+            "command": "pnpm build"
+          }
+        }
+      ]
+    },
+    {
+      "id": "p3-render",
+      "title": "Phase 3: Render the Order Book",
+      "spots": [
+        {
+          "id": "p3-spot-1",
+          "title": "TBD in cycle 5+",
+          "target_file": "src/App.tsx",
+          "target_range": "147-219",
+          "prompt": "TBD in cycle 5+ — Phase 3 spot 1 will cover rendering the order book data into the JSX output with price bars and mid-price display.",
+          "verification": {
+            "mode": "compile",
+            "command": "pnpm build"
+          }
+        }
+      ]
+    }
+  ]
+}

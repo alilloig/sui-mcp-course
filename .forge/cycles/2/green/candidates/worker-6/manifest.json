@@ -1,0 +1,13 @@
+{
+  "worker": 6,
+  "target_files": [
+    "mcp/server/src/state.ts",
+    "mcp/server/src/schemas/state.ts",
+    "mcp/server/src/tools/start.ts",
+    "mcp/server/src/index.ts",
+    "scripts/e2e/harness.ts",
+    "mcp/server/package.json"
+  ],
+  "lines_changed": 423,
+  "blocked": false
+}

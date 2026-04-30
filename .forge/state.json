@@ -1,0 +1,59 @@
+{
+  "phase": "done",
+  "current_cycle": 6,
+  "total_cycles": 6,
+  "cycle_status": "complete",
+  "iteration": 0,
+  "retries_per_phase": {"red": 0, "green": 0, "consolidated-review": 0, "phase-f": 1},
+  "phase_f_round2_pass": true,
+  "phase_f_round2_summary": "0 critical, 1 high (C013), 1 medium (C015), 15 info verified across 6 round-2 reviewers. All 16 e2e scenarios pass. 4.5/5 round-1 highs closed by cycle 6; the 0.5 partial closed by fast-follow.",
+  "fast_follow_patches_applied": [
+    "C013/E-010: harness.ts callTool intercept — bypass MCP transport and call runPreflightProbe directly with probeOpts when sandbox-manifest-reachable + stubs registered. T-159 now passes WITHOUT DOCKER_HOST=tcp://127.0.0.1:1 env trick (~30 LOC).",
+    "C015/E-011: suiCli.ts:48 — drop 'version' word from message; tighten T-160 to assert exact spec wording (1 char fix + 1 line test tighten).",
+    "C023/cycle-6-H001: outputStyle.ts:45 emitter renamed 'settings-file-malformed' → 'settings-parse-error' to match warnings.ts union; LearningOutputStyleDisabledWarning interface dropped (superseded by OutputStylePluginNotEnabledWarning); T-171 expectedKinds rebased onto current registry kinds.",
+    "M005+L007+R4-002 state-archive: hash-in-filename refactor. Drop archiveCounter mutable state, drop O(N) dir-scan + read+rehash loop, drop findExistingArchive helper. Use wx-flag EEXIST as O(1) name-based dedup. Update T-051 to assert hash format. ~30 LOC dropped from state.ts.",
+    "M002+M003+L005 cycle-e2e-pass.sh: distinct exit codes — 0 pass / 77 skip (autotools convention) / 1 fail / 2 unknown-scenario. Tracks ANY_SKIP/ANY_FAIL flags; emit_skip and emit_fail helpers. Cycle-6 T-314 widened to accept 0 OR 77.",
+    "M001 selectPath corrupt-without-archivedTo: error message now names the manual-recovery escape (rm .sui-deepbook-course/state.json).",
+    "L009 enabledPlugins=[] (array): now produces settings-parse-error warning naming the structural defect, distinct from 'plugin not enabled'.",
+    "L010 start.ts type-cast: build StateWarning fully before pushing rather than mutating + casting through structural type."
+  ],
+  "final_test_count": "415 passing + 1 skipped (T-157 real-Docker E-008 deferral) under canonical DOCKER_HOST=tcp://127.0.0.1:1 invocation",
+  "carry_forward_open_low_priority": [
+    "L001 T-017 stale comment in outputStyle.test.ts — wording only, defer",
+    "L003/L004 E-007 stub assertion wording in scenarios.json — wording only, defer",
+    "L008 probeOpts named type alias (ProbeOptionsMap) — refactor, defer"
+  ],
+  "remediation_cycles": 1,
+  "light_mode": false,
+  "quick_mode": false,
+  "started_at": "2026-04-28T13:30:00Z",
+  "paused": false,
+  "pause_history": [
+    {
+      "paused_at": "2026-04-29T18:27:00Z",
+      "resumed_at": "2026-04-30T08:15:00Z",
+      "reason": "Anthropic account usage limit hit a FOURTH time during Phase F consolidator dispatch (resets ~20:00 Madrid / 18:00 UTC, ~1.5h from pause). All 6 Phase F reviewers completed successfully (.forge/e2e/reviewers/subagent-{1..6}.json — 28 raw findings). cycle-validate.sh PASSED. cycle-consolidate.mjs PASSED — produced .forge/e2e/_consolidated.json with 20 clusters (6 high, 4 medium, 4 low, 6 info). Consolidator agent (forge-consolidator subagent_type=code-forge:forge-consolidator, MODE=e2e) was dispatched and immediately blocked by usage limit before producing review.md. Agent ID a6330018d5632ae2a. Resume: re-dispatch a FRESH consolidator (the suspended one is unrecoverable without burning tokens to ping it); same prompt — read _consolidated.json + reviewer raws + spec.md, verify the 6 high clusters against source, write .forge/e2e/review.md, then orchestrator runs cycle-e2e-pass.sh. The 6 high-severity headline findings to verify: (1) E-014/E-015 paths/01-orderbook-viewer/phases.json has wrong phase IDs p2-polling/p3-display vs spec p2-retry/p3-poll + missing {{poll_interval_ms}} placeholder; (2) E-002 outputStyle.ts:53,63 returns bare {ok:false} with no warning naming learning-output-style (AC-1.1); (3) E-006 state.ts archives corrupt bytes but never unlinks state.json — wedges user; (4) E-010 runPreflightProbe.ts:55-57 calls precondition checker with empty ProbeOptions — harness stubs never reach gate, T-159 fails live; (5) E-008 runDeployRemediation enforces sui-cli 1.63.2–1.64.1 but host has 1.69.2, scenario short-circuits.",
+      "gate": "G-Usage"
+    },
+    {
+      "paused_at": "2026-04-29T13:00:31Z",
+      "resumed_at": "2026-04-29T14:13:54Z",
+      "reason": "Anthropic account usage limit hit a THIRD time during cycle 5 green-phase worker dispatch (resets ~15:00 Madrid / 14:00 UTC, ~1h from pause). All 6 workers terminated mid-task; staged 2-9 files of ~24 each. None wrote manifest.json. Cycles 1-4 are complete with reviewed gates passing; cycle-5 contract+test-list+red are complete (107 tests written; baseline 218+1 skipped still passing). Cycle 5 green is partially-staged-and-incomplete. Before re-dispatching after reset: rm -rf .forge/cycles/5/green/candidates/* so the forge-guard parallel-dispatch window starts clean. Phase F (e2e) still ahead.",
+      "gate": "G-Usage"
+    },
+    {
+      "paused_at": "2026-04-28T14:55:00Z",
+      "resumed_at": "2026-04-28T18:06:26Z",
+      "reason": "Anthropic account usage limit hit during cycle 1 green-phase worker dispatch (resets ~18:50 Madrid). Workers 1 and 2 terminated mid-task with no manifest.json. Workers 3-6 blocked by forge-guard rule 7's 5-second parallel-dispatch window. When usage resets, before re-dispatching: rm -rf .forge/cycles/1/green/candidates/*",
+      "gate": "G-Usage"
+    },
+    {
+      "paused_at": "2026-04-28T21:50:00Z",
+      "resumed_at": "2026-04-29T07:34:30Z",
+      "reason": "Anthropic account usage limit hit AGAIN during cycle 4 green-phase worker dispatch (resets ~23:50 Madrid / 21:50 UTC + ~2h). All 6 workers terminated mid-task; each staged 16-22 files (out of 35 contract scope) but none wrote manifest.json. Cycles 1+2+3 are complete; cycle 4 contract+test-list+red are complete; cycle 4 green is partially-staged-and-incomplete. Before re-dispatching after reset: rm -rf .forge/cycles/4/green/candidates/* so the forge-guard parallel-dispatch window starts clean. Cycle 5 (help-ladder) and Phase F (e2e) still ahead.",
+      "gate": "G-Usage"
+    }
+  ],
+  "claude_plugin_root": "/Users/alilloig/.claude/plugins/cache/contract-hero/code-forge/0.1.0",
+  "plugin_migration_note": "resumed 2026-04-28 after code-forge-v2 (local) → code-forge (contract-hero marketplace) rename"
+}

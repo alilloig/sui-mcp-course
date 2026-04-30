@@ -1,0 +1,67 @@
+[
+  {
+    "id": "R6-001",
+    "title": "E-012 passes: malformed path.json yields malformed-path-json warning, bad path skipped",
+    "severity": "info",
+    "category": "e2e-flow",
+    "file": "mcp/server/src/registry.ts",
+    "line_range": "82-93",
+    "description": "Drove scenario E-012 by setting up a temp project root with paths/01-good (well-formed) and paths/99-broken/path.json (trailing-comma JSON), then invoking runStart. The registry emitted a single warning with kind 'malformed-path-json' (matches the scenario regex /malformed-path-json|invalid-path-json/i), the warning carried the absolute path of the bad file, the broken slug was excluded from start.paths, and the good path 01-good was returned. Scenario id: E-012.",
+    "impact": "Confirms AC-3.2 holds for the wire shape: one malformed sibling does not crash the registry and does not poison the discovery of other valid paths. cycle-e2e-pass.sh will see the E-012 marker.",
+    "recommendation": "No code change required for the runtime guarantee. See R6-003 for a separate finding about the human-readable wording.",
+    "evidence": "kind: 'malformed-path-json' ... 'Failed to parse /var/folders/.../99-broken/path.json: Unexpected token ...'. paths array contained only { slug: '01-good', ... }. Scenario id: E-012.",
+    "confidence": "high"
+  },
+  {
+    "id": "R6-002",
+    "title": "E-013 passes: empty paths/ yields empty-paths-dir warning and paths: []",
+    "severity": "info",
+    "category": "e2e-flow",
+    "file": "mcp/server/src/registry.ts",
+    "line_range": "41-51",
+    "description": "Drove scenario E-013 by setting up a temp project root containing an empty paths/ directory and invoking runStart. The registry returned paths: [] and exactly one warning with kind 'empty-paths-dir'. No exception was raised, no stack trace was surfaced, and outputStyleOk was true on the host (settings already enabled). Scenario id: E-013.",
+    "impact": "Confirms AC-3.3 at the wire level: the engine handles the empty-registry case without crashing and surfaces a structured warning the rendering layer can convert into a student-facing message.",
+    "recommendation": "No code change required for the runtime guarantee. See R6-004 about the literal wording promised by the spec.",
+    "evidence": "kind: 'empty-paths-dir', message: 'Paths directory exists but contains no path subdirectories: <abs paths/>'; result.paths === []. Scenario id: E-013.",
+    "confidence": "high"
+  },
+  {
+    "id": "R6-003",
+    "title": "Malformed-path-json warning message lacks the 'skipped' / 'parse error' phrasing E-012 asserts",
+    "severity": "low",
+    "category": "e2e-flow",
+    "file": "mcp/server/src/registry.ts",
+    "line_range": "86-92",
+    "description": "Scenario E-012's expectation reads 'assert the registry reports \\\"skipped paths/99-broken/path.json: parse error\\\" with the file path'. The actual message is 'Failed to parse <abs path>: <parser detail>'. The kind discriminator is correct ('malformed-path-json'), and the absolute file path is present, but the literal substrings 'skipped' and 'parse error' are absent. Whether this trips an assertion depends on how the cycle-e2e-pass.sh harness matches: the dimension-prompt instructs me to match on the kind regex, which passes. A stricter harness that greps the message text would not. Scenario id: E-012.",
+    "impact": "If a future reviewer or harness greps the literal phrase 'skipped' or 'parse error' in the message (per the scenario wording), this scenario will appear to fail despite the registry behaving correctly. It also leaks a small UX gap: the student-facing surface should make clear the path was skipped, not just that parsing failed.",
+    "recommendation": "Reword the malformed-path-json message to 'Skipped <path>: parse error: <detail>' (and the symmetric missing-/invalid- variants). This satisfies both the strict scenario-text reading and the looser kind-regex reading without changing the wire schema.",
+    "evidence": "warnings.push({ kind: 'malformed-path-json', message: `Failed to parse ${pathJsonFile}: ${err instanceof Error ? err.message : String(err)}`, path: pathJsonFile });",
+    "confidence": "medium"
+  },
+  {
+    "id": "R6-004",
+    "title": "Empty-paths-dir message does not contain the literal phrase 'no paths installed' from AC-3.3",
+    "severity": "low",
+    "category": "e2e-flow",
+    "file": "mcp/server/src/registry.ts",
+    "line_range": "44-49",
+    "description": "AC-3.3 and scenario E-013 both promise an explicit 'no paths installed' message. The registry emits kind 'empty-paths-dir' with message 'Paths directory exists but contains no path subdirectories: <path>'. Semantically equivalent, lexically different. The kind-based assertion holds; a literal-text assertion against 'no paths installed' would not. The runStart envelope does not carry a separately composed user-facing message; the skill or command body has to translate the warning kind into UX copy, and there is no such translator on disk yet. Scenario id: E-013.",
+    "impact": "If the rendering layer just echoes warning.message to the student, the spec's promised phrasing never reaches them. cycle-e2e-pass.sh enforcement of AC-3.3 wording is currently dependent on a layer that does not exist; the gap will surface the moment the skill body or course-engine prose grep-checks for 'no paths installed'.",
+    "recommendation": "Either (a) update the message to 'No paths installed: <path>' so producer matches spec wording, or (b) leave the message verbose and add a short user_message field to the empty-paths-dir warning whose value is the literal canned string 'no paths installed'. Option (a) is the smaller surface change.",
+    "evidence": "warnings: [{ kind: 'empty-paths-dir', message: `Paths directory exists but contains no path subdirectories: ${scanRoot}` }]",
+    "confidence": "medium"
+  },
+  {
+    "id": "R6-005",
+    "title": "runStart consumes registry warnings with no projectRoot/paths fallback when paths/ is absent",
+    "severity": "low",
+    "category": "e2e-flow",
+    "file": "mcp/server/src/tools/start.ts",
+    "line_range": "19-36",
+    "description": "While exercising E-013 I noticed the start tool always derives pathsRoot from projectRoot ('paths' under the student project) — but the spec architecture (line 167-180 of spec.md and the path-selection flow) treats the path registry as PLUGIN-rooted, not project-rooted. Failure Modes line 430 says 'paths/ directory absent ⇒ stop: \"Plugin packaging error: paths/ directory missing.\"' For both E-012 and E-013 the harness happens to write into <projectRoot>/paths because that is what runStart reads, but if a real install ever has plugin-root paths/ vs project-root paths/, the engine reads the wrong tree. The empty case returned 'empty-paths-dir' from a project-root paths/ even though paths/01-orderbook-viewer is shipped at plugin root. Scenario ids: E-012, E-013.",
+    "impact": "Out of strict review scope, but worth flagging: the registry path resolution may be wired to the wrong root. If the production deployment expects the plugin's bundled paths/, students with an empty project tree would always see 'no paths installed' instead of the shipped orderbook-viewer path. The current scenarios do not catch this because they construct the wired-up directory layout manually.",
+    "recommendation": "Confirm whether the registry should scan `${plugin_root}/paths` (per architecture) or `${project_root}/paths` (per current code). If plugin-rooted, runStart should use a CLAUDE_PLUGIN_ROOT-anchored resolver; otherwise document the project-rooted convention in spec.md.",
+    "evidence": "const pathsRoot = path.join(projectRoot, 'paths'); const registry = await scanRegistry(pathsRoot);",
+    "confidence": "low"
+  }
+]

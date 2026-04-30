@@ -1,0 +1,899 @@
+[
+  {
+    "cluster_id": "C023",
+    "title": "outputStyle.ts emits warning kind not declared in warnings.ts union (settings-file-malformed vs settings-parse-error)",
+    "file": "mcp/server/src/outputStyle.ts",
+    "line_ranges": [
+      "42-49"
+    ],
+    "agreement_count": 2,
+    "reviewers": [
+      2,
+      3
+    ],
+    "max_severity": "high",
+    "min_severity": "medium",
+    "disputed_severity": false,
+    "categories": [
+      "design",
+      "error-handling"
+    ],
+    "recommendations": [
+      "Audit warnings.ts union vs every emitter site in cycle-1 through cycle-6 source. Either rename the warnings.ts member to 'settings-file-malformed' (matching the emitter) or rename the emitter at outputStyle.ts:45 to 'settings-parse-error' (matching the union). Also drop unused union members like 'learning-output-style-disabled' that were superseded by 'output-style-plugin-not-enabled'.",
+      "Either rename the emitted kind to 'settings-parse-error' to match the declared type, or add 'settings-file-malformed' to the SettingsParseErrorWarning union in warnings.ts. Prefer the rename — it is the smaller diff and the existing declared type is referenced from EngineWarning."
+    ],
+    "descriptions": [
+      "outputStyle.ts:45 returns warning with kind='settings-file-malformed' on the malformed-JSON branch, but warnings.ts declares the union member as kind='settings-parse-error'. The two literals diverge, so the discriminated union narrowing in start.ts can never match this warning, and downstream consumers that key off the kind silently miss the case. Cycle 6 H002 introduced 'output-style-plugin-not-enabled' and added it to the union correctly, but didn't audit the pre-existing kind labels against the union — this divergence likely predates cycle 6 but cycle 6's changes draw attention to it.",
+      "outputStyle.ts emits a warning with kind 'settings-file-malformed' on the JSON.parse failure branch, but warnings.ts declares only 'settings-parse-error' (line 44-47) for that condition. The OutputStyleWarning interface in outputStyle.ts uses a loose 'kind: string', so TypeScript does not catch the mismatch, but any consumer that narrows on the EngineWarning discriminated union (warnings.ts:139-148) will fail to match this kind — the warning escapes typed narrowing and silently degrades to the unknown bucket."
+    ],
+    "impacts": [
+      "Type-narrowing breaks for the malformed-JSON refusal branch. Any caller pattern-matching on the kind discriminator silently treats this case as unhandled. Same silent-failure shape that H002 was specifically introduced to fix on the disabled-plugin branch.",
+      "Downstream warning consumers (start.ts pushes it onto warnings array; LLM-facing renderers narrow on the union) cannot identify or handle the malformed-settings case. A real parse failure of ~/.claude/settings.json produces a warning that no typed handler will pattern-match, so the user-facing remediation step is lost. This is the same class of silent-failure the H002 fix was meant to close."
+    ],
+    "evidence": "outputStyle.ts:45 emits {kind:'settings-file-malformed', ...}; warnings.ts:44-47 declares the union case as {kind:'settings-parse-error', ...}. Cross-reference: cycle-6 synthesis-notes documents H002 introducing 'output-style-plugin-not-enabled' but does NOT document a rename of the existing kinds.",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R2-001",
+      "R3-001"
+    ]
+  },
+  {
+    "cluster_id": "C003",
+    "title": "selectPath corrupt-without-archivedTo path leaves user wedged with no recovery guidance",
+    "file": "mcp/server/src/tools/selectPath.ts",
+    "line_ranges": [
+      "82-92",
+      "83-92"
+    ],
+    "agreement_count": 2,
+    "reviewers": [
+      1,
+      3
+    ],
+    "max_severity": "medium",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "correctness",
+      "error-handling"
+    ],
+    "recommendations": [
+      "Either (a) extend SelectPathResult with an optional warnings: StateWarning[] field and push a state-corrupt warning when stateResult.archivedTo is defined, or (b) document explicitly in selectPath.ts that the recovery path is silent because start.ts already emitted the warning on the prior call. Option (a) is more robust because it does not depend on call-ordering assumptions.",
+      "Append a manual-remediation hint to the errors array: e.g. `'State corrupt and archive write failed; manually delete <statePath> and re-run /start. Original error: ${stateResult.message}'`. No code-path change needed — only the error string. Cheap, high-leverage."
+    ],
+    "descriptions": [
+      "When loadState returns kind:'corrupt' with archivedTo defined, selectPath falls through to mint a fresh state and returns {ok:true, ...} per AC-7.2. This is correct. However, the user receives NO indication that their previous state was corrupted and archived — selectPath's SelectPathResult shape has no warnings field (only ok / personalizationPrompts / errors). The contract at AC-7.2 requires the slot be treated as 'absent' but does not forbid surfacing a recovery notice. From the user's perspective they invoked selectPath and got back a clean ok:true result; they have no way to learn that their state.json was archived to .sui-deepbook-course/state.corrupt-*.json.",
+      "When loadState returns kind='corrupt' AND archivedTo is undefined (archive write failed — ENOSPC, EACCES on .sui-deepbook-course, etc.), selectPath returns `{ ok: false, errors: ['State corrupt: <message>'] }`. The user is now wedged: state.json is corrupt, no archive was written, and the error string only reflects loadState's diagnostic (e.g. 'archive write also failed (ENOSPC)') without telling the user what manual remediation step would unblock them (e.g. 'remove .sui-deepbook-course/state.json by hand and re-run /start')."
+    ],
+    "impacts": [
+      "Surprise factor for the user: their cursor history silently disappears with no diagnostic. start.ts already emits a 'state-corrupt' warning with archivedTo on the same path (start.ts L54-67), so the channel exists — selectPath just doesn't use it. T-309 asserts the recovery succeeds but does NOT assert any warning is surfaced, so this gap is not caught by tests. Low severity because the contract permits it (AC-7.2 only mandates fresh-state minting), but it's a UX seam.",
+      "On a low-disk or restricted-permission environment, the user sees an opaque error and has no path forward. This is the precise failure mode the H003 cycle was meant to close for the 'archive succeeded' branch but it remains open for the 'archive failed' branch — and that branch is the harder-to-reach one in tests, so it ships untested in the recovery direction."
+    ],
+    "evidence": "if (stateResult.archivedTo === undefined) {\n      return { ok: false, errors: [`State corrupt: ${stateResult.message}`] };\n    }\n    // archivedTo is set — proceed as if the slot is absent (fall through)",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R1-002",
+      "R3-002"
+    ]
+  },
+  {
+    "cluster_id": "C006",
+    "title": "cycle-e2e-pass.sh always returns exit 0 — non-skip failures not surfaced",
+    "file": "scripts/cycle-e2e-pass.sh",
+    "line_ranges": [
+      "115-126"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      1
+    ],
+    "max_severity": "medium",
+    "min_severity": "medium",
+    "disputed_severity": false,
+    "categories": [
+      "correctness"
+    ],
+    "recommendations": [
+      "Either (a) implement the real pnpm deploy-all spawn under a guarded code path and propagate its exit code, or (b) tighten the contract wording / scripts header to say the script is a precondition-gate-only stub and the actual deploy is performed by a separate harness. The current state — 'pretends to run E-008 but always exits 0' — is the worst of both worlds for CI consumers."
+    ],
+    "descriptions": [
+      "The script terminates with `exit 0` unconditionally at L125. The `case` dispatch at L116-123 calls run_e008 (which returns 0 on skip and 0 on a successful manual-check passthrough) for SCENARIO_FILTER='E-008' or '' (empty), and prints an INFO line for any other filter — but never returns non-zero. The contract at AC-5 says 'on a host with sui in range, E-008 still runs as before' implying the success/failure signal of the real run must propagate. The shebang has `set -euo pipefail` so a deploy-all command that exits non-zero would cause the script to abort, but since run_e008 never spawns the real deploy (L107: 'Skipping actual pnpm deploy-all here — manual run required in full e2e environment'), the script can never produce a non-zero exit even on a host with valid Sui+Docker."
+    ],
+    "impacts": [
+      "A CI integrator who runs cycle-e2e-pass.sh expecting exit-status semantics ('0=pass/skip, 1=fail') will get a false-PASS signal for any genuine E-008 failure. T-314 asserts the skip exit is 0, but no test asserts a real-fail exit is non-zero. The contract wording 'On a host with sui in range, E-008 still runs as before' is partially false: the script delegates to a manual run rather than spawning the real deploy. This is a documented hand-wave (the L106-108 INFO lines say so), but it means the script is not yet a complete E-008 implementation."
+    ],
+    "evidence": "echo \"INFO: Skipping actual pnpm deploy-all here (manual run required in full e2e environment).\"\n  echo \"PASSED: scenario=E-008 (preconditions met; run manually in full e2e environment)\"\n  return 0",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R1-005"
+    ]
+  },
+  {
+    "cluster_id": "C008",
+    "title": "cycle-e2e-pass.sh skip and pass share exit code 0; CI cannot distinguish from $?",
+    "file": "scripts/cycle-e2e-pass.sh",
+    "line_ranges": [
+      "12-14, 78-110"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      3
+    ],
+    "max_severity": "medium",
+    "min_severity": "medium",
+    "disputed_severity": false,
+    "categories": [
+      "error-handling"
+    ],
+    "recommendations": [
+      "Either (a) emit a non-zero-but-non-failure code (e.g. 77, the autotools convention for 'skipped'), or (b) write a machine-readable JSON receipt to a known file (e.g. .forge/e2e/last-run.json) listing each scenario's outcome with status='passed'|'skipped'|'failed' and a reason. Option (b) is preferred because it survives shell exit-code conflation and is greppable by CI. Add a final line summarizing: `echo \"E2E_RUN: passed=N skipped=M failed=K\"` so humans can spot skips at a glance."
+    ],
+    "descriptions": [
+      "Both PASSED and SKIPPED outcomes exit 0. A naive CI step that only inspects $? sees green for both, masking the fact that E-008 was never actually exercised. The header documents this behavior ('all processed scenarios passed OR were skipped with a reason → 0'), but downstream automation rarely parses stdout for `SKIPPED:` prefixes — it greps exit code. AC-5 specifies the structured stdout record but not an exit-code distinction."
+    ],
+    "impacts": [
+      "A CI pipeline that runs cycle-e2e-pass.sh on every PR will report 'all green' even when the host's Sui CLI is permanently out of range, hiding regression risk for E-008. False sense of coverage. The risk is silent: nothing in the pipeline tells the operator that a scenario has been silently skipped for weeks."
+    ],
+    "evidence": "# Exit codes:\n#   0 — all processed scenarios passed or were skipped with a reason\n#   1 — one or more scenarios failed without a skip reason\n# ...\nemit_skip \"E-008\" \"sui-cli out of supported range...\"\n    return 0",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R3-005"
+    ]
+  },
+  {
+    "cluster_id": "C016",
+    "title": "findExistingArchive silent skip on per-archive read failure can produce duplicate archives",
+    "file": "mcp/server/src/state.ts",
+    "line_ranges": [
+      "131-143"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      3
+    ],
+    "max_severity": "medium",
+    "min_severity": "medium",
+    "disputed_severity": false,
+    "categories": [
+      "error-handling"
+    ],
+    "recommendations": [
+      "On per-archive readFile failure, surface the skip via a structured trace (return-value annotation or a `warnings` accumulator). At minimum, distinguish ENOENT (race: file deleted between readdir and readFile, benign) from EACCES (permissions, alarming). Treat EACCES on an existing archive as a signal that dedup is unreliable; either propagate as a fatal error or include the unreadable archive's name in the LoadStateResult message."
+    ],
+    "descriptions": [
+      "Inside the for-loop, `catch (_readErr)` swallows per-archive read errors and continues. If a previously-written archive happens to be unreadable for the current process (EACCES because someone tightened perms, or partial-write race during prior archiveCorruptFile call), findExistingArchive returns null, and archiveCorruptFile then writes a fresh archive — defeating the H003 dedup guarantee for AC-7.2 (count of state.corrupt-*.json files MUST equal 1, not N)."
+    ],
+    "impacts": [
+      "Edge case but real: a corrupt-state recovery on a directory whose prior archive lost its read perms will silently double-archive. Users in long-lived environments accumulate archives; AC-7.2's invariant 'count == 1' breaks. The error is invisible — there is no log, warning, or counter."
+    ],
+    "evidence": "} catch (_readErr) {\n      // Can't read this archive — skip it\n    }",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R3-003"
+    ]
+  },
+  {
+    "cluster_id": "C017",
+    "title": "archiveCorruptFile dedup has TOCTOU race between findExistingArchive and writeFile",
+    "file": "mcp/server/src/state.ts",
+    "line_ranges": [
+      "156-172"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      3
+    ],
+    "max_severity": "medium",
+    "min_severity": "medium",
+    "disputed_severity": false,
+    "categories": [
+      "error-handling"
+    ],
+    "recommendations": [
+      "Use the content hash as part of the archive filename (e.g. `state.corrupt-${ts}-${hash}.json`), so wx-flag protection becomes content-aware. Two concurrent writes with identical content collide on filename → wx fails → second writer detects and resolves to the existing archive. Combined with the existing findExistingArchive scan, this closes the race deterministically without lockfiles."
+    ],
+    "descriptions": [
+      "Two concurrent /start invocations against the same corrupt state.json both call findExistingArchive (line 156), both observe no existing archive, both increment archiveCounter (line 165) to different values, both proceed to fsPromises.writeFile with the wx flag. Because each invocation generates a unique filename via the timestamp+counter suffix, the wx flag never triggers a collision — both writes succeed, leaving 2 archives with identical bytes. archiveCounter is per-process, so two processes (e.g. an IDE and a CLI invoking the MCP server simultaneously) would also race regardless."
+    ],
+    "impacts": [
+      "AC-7.2's archive de-duplication invariant ('exactly 1 archive per unique corrupt content') breaks under concurrent /start. The wx flag protects only against identical-name collisions; content-based dedup with no lock is racy by construction. In practice the user-visible impact is minor (a second archive of the same bytes is harmless leak), but the contract-stated invariant is violated."
+    ],
+    "evidence": "const existingPath = await findExistingArchive(stateDir, content);\n  if (existingPath !== null) {\n    return existingPath;\n  }\n  // ...\n  await fsPromises.writeFile(archivePath, content, { flag: 'wx', mode: 0o600 });",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R3-004"
+    ]
+  },
+  {
+    "cluster_id": "C001",
+    "title": "T-017 stale comment contradicts cycle-6 H002 — but assertion still holds",
+    "file": "tests/outputStyle.test.ts",
+    "line_ranges": [
+      "117-124"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      1
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "Update the comment to read '// Cycle 6 H002: this branch now emits output-style-plugin-not-enabled; T-306/T-307 in cycle6.outputStyle.test.ts assert the warning shape directly.' Optionally tighten the assertion to also expect result.warning?.kind==='output-style-plugin-not-enabled' so the cycle-1 baseline matches the cycle-6 invariant."
+    ],
+    "descriptions": [
+      "T-017 covers the 'enabledPlugins key absent' branch and was authored in cycle 1 with the comment 'Silent disable path — must not throw, warning is optional but typically absent.' Under cycle-6 H002 the implementation now ALWAYS emits an output-style-plugin-not-enabled warning on this branch (see outputStyle.ts L51-58), so the comment is factually wrong. The assertion itself only checks result.ok===false, which still passes — but a future maintainer who reads the comment would believe the silent-disable contract still holds and might reintroduce a bare {ok:false} return."
+    ],
+    "impacts": [
+      "Documentation drift. Risk that a future change accidentally removes the H002 warning from the absent-key branch because the test comment claims silence is acceptable. The orchestrator amendment list in synthesis-notes covers T-014 (the false-key branch) but not T-017 (the absent-key branch); both should have been rebased symmetrically."
+    ],
+    "evidence": "// Silent disable path — must not throw, warning is optional but typically absent.",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R1-001"
+    ]
+  },
+  {
+    "cluster_id": "C004",
+    "title": "T-310 archive de-dup test runs only 3 starts; concurrency case unverified",
+    "file": "tests/cycle6.state.test.ts",
+    "line_ranges": [
+      "148-180"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      1
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "Add a test that fires loadState concurrently against the same corrupt seed (Promise.all of two loadState calls) and asserts the directory still has exactly one state.corrupt-*.json. If the wx-flag race is the chosen mitigation, document it explicitly in state.ts archiveCorruptFile and assert archiveCorruptFile rejects gracefully on EEXIST (currently the rejection bubbles out as 'corrupt without archivedTo' in classifyCorrupt L100-106, which is acceptable but undocumented)."
+    ],
+    "descriptions": [
+      "T-310 asserts archive de-duplication for 3 SEQUENTIAL runStart calls on identical corrupt bytes. The contract AC-7.2 mandates 'after N consecutive /start calls on the same corrupt input MUST equal 1'. The dedup mechanism is content-hash-based (state.ts L114-144 findExistingArchive), reading the state directory and computing SHA-256 over each existing archive's bytes. There is no file-locking around findExistingArchive → writeFile, so two concurrent loadState calls on identical corrupt bytes could both observe an empty directory and both write archives — defeating the dedup invariant. The test exercises only sequential calls, so this race is not caught."
+    ],
+    "impacts": [
+      "A user running `/start` twice in rapid succession (e.g. a script that retries) could still produce 2 archives. In practice MCP tool invocations from a single Claude session are serialized, so the race is unlikely — but the contract's wording 'after N consecutive /start calls' does not exclude concurrent calls. Low severity because (a) the practical attack surface is narrow and (b) the wx flag on writeFile (state.ts L171) would cause the second writer to fail with EEXIST, surfacing the contention rather than silently double-archiving."
+    ],
+    "evidence": "// Three start calls in sequence.\n    await runStart({ projectRoot });\n    await runStart({ projectRoot });\n    await runStart({ projectRoot });",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R1-003"
+    ]
+  },
+  {
+    "cluster_id": "C005",
+    "title": "scenarios.json AC mapping for E-008 unchanged — covers_contract still says AC-2.3",
+    "file": ".forge/e2e/scenarios.json",
+    "line_ranges": [
+      "213-216"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      1
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "correctness"
+    ],
+    "recommendations": [
+      "Update E-008's covers_contract to ['AC-2.3', 'AC-2.5'] so the precondition→AC trace is explicit. Alternatively, document in the file header that the precondition list is the authoritative AC-2.5 carrier and covers_contract reflects the deploy-flow ACs only."
+    ],
+    "descriptions": [
+      "Cycle 6 AC-5 (H005) adds the 'Sui CLI in 1.63.2–1.64.1' precondition to E-008 and pins the contract anchor as AC-2.5 (per the cycle-6 contract.md L51, T-313's ac_anchor). However, E-008's covers_contract array in scenarios.json still reads ['AC-2.3'] — unchanged from cycle 5. The cycle-6 contract says AC-2.5 governs the precondition addition. The covers_contract field is now stale relative to the new precondition."
+    ],
+    "impacts": [
+      "E2E coverage indexing in any tool that reads covers_contract (e.g. for a coverage matrix between scenarios and acceptance criteria) will not see E-008 covering AC-2.5, only the original AC-2.3. This is mostly cosmetic for now because cycle-e2e-pass.sh and the cycle-6 tests don't read covers_contract. Low severity, but it's a documentation seam between two adjacent ACs that share a scenario."
+    ],
+    "evidence": "\"covers_contract\": [\n      \"AC-2.3\"\n    ],",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R1-004"
+    ]
+  },
+  {
+    "cluster_id": "C007",
+    "title": "scripts/cycle-e2e-pass.sh duplicates 3 nearly-identical version-parser helpers",
+    "file": "scripts/cycle-e2e-pass.sh",
+    "line_ranges": [
+      "31-50"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      2
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "design"
+    ],
+    "recommendations": [
+      "Consolidate to a single 'parse_sui_version' function returning all three components; update the comparison block to read once."
+    ],
+    "descriptions": [
+      "The script defines three very similar helpers (sui_version_major/minor/patch) that all do the same regex extraction differing only by which capture group they return. A single parser that emits all three components into a record (e.g., 'echo \"$major $minor $patch\"' read into a triple) would shrink the script and reduce drift risk if the version-string format changes."
+    ],
+    "impacts": [
+      "Low — extra LOC and a small drift risk if the sui-cli version string format changes. Script behavior is correct today."
+    ],
+    "evidence": "scripts/cycle-e2e-pass.sh:31-50 in the applied worker-4 candidate.",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R2-003"
+    ]
+  },
+  {
+    "cluster_id": "C009",
+    "title": "cycle-e2e-pass.sh unknown-scenario fallthrough silently exits 0",
+    "file": "scripts/cycle-e2e-pass.sh",
+    "line_ranges": [
+      "116-125"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      3
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "error-handling"
+    ],
+    "recommendations": [
+      "Treat unknown scenario filter as an error: emit `ERROR: scenario=<id> not handled by this script (handled scenarios: E-008)` and exit 2. Reserve exit 1 for genuine scenario failures. If the empty-string filter is meant to mean 'run all', keep that branch as-is but require any explicit filter to match a known scenario."
+    ],
+    "descriptions": [
+      "The case dispatch's `*)` arm prints `INFO: scenario=${SCENARIO_FILTER} not handled by this script` and exits 0. A typo in the scenario id (e.g. `E-08` instead of `E-008`) produces a green run that exercised nothing. Combined with R3-005's exit-code conflation, this is a silent-no-op pattern."
+    ],
+    "impacts": [
+      "An operator running `cycle-e2e-pass.sh E-009` (a scenario this script does not yet handle) sees INFO + exit 0 and assumes coverage. As more scenarios are added to scenarios.json, the gap between 'scenarios this script handles' and 'scenarios in scenarios.json' will grow invisibly."
+    ],
+    "evidence": "*)\n    echo \"INFO: scenario=${SCENARIO_FILTER} not handled by this script\"\n    ;;\nesac\n\nexit 0",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R3-006"
+    ]
+  },
+  {
+    "cluster_id": "C010",
+    "title": "sui_cli_in_range conflates 'sui not installed' with 'sui out of range' in skip message",
+    "file": "scripts/cycle-e2e-pass.sh",
+    "line_ranges": [
+      "31-50, 88-96"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      3
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "error-handling"
+    ],
+    "recommendations": [
+      "Distinguish the two cases in run_e008: check `command -v sui` first; if absent, emit `SKIPPED: scenario=E-008 reason='sui CLI not installed (required: 1.63.2-1.64.1)'`. Only fall through to the range check when the binary exists."
+    ],
+    "descriptions": [
+      "When `sui` is not on PATH at all, `sui_version_string` returns an empty string (because of `2>/dev/null || echo \"\"`). Then sui_cli_in_range parses empty as out-of-range, and the skip message becomes `sui-cli out of supported range (got: ; supported: 1.63.2-1.64.1)`. The user cannot distinguish 'sui CLI not installed' from 'sui CLI version 1.69 (genuinely out of range)'."
+    ],
+    "impacts": [
+      "Diagnostic clarity issue, not a correctness issue. A user who has not installed Sui sees a misleading 'out of range' skip message when the real problem is a missing binary. They may waste time downgrading a non-existent install."
+    ],
+    "evidence": "sui_version_string() {\n  sui --version 2>/dev/null | head -1 || echo \"\"\n}",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R3-007"
+    ]
+  },
+  {
+    "cluster_id": "C018",
+    "title": "findExistingArchive does redundant read+rehash per directory entry; encoding hash in filename would avoid the O(N) scan",
+    "file": "mcp/server/src/state.ts",
+    "line_ranges": [
+      "118-144"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      4
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "simplicity"
+    ],
+    "recommendations": [
+      "Encode the content hash in the archive filename: 'state.corrupt-<sha256-hex16>-<isoTs>.json'. Replace findExistingArchive with a single fs.existsSync check on the candidate filename derived from the hash. Drop the read+rehash loop."
+    ],
+    "descriptions": [
+      "findExistingArchive reads up to N existing archive files on every archiveCorruptFile call, computing crypto.createHash('sha256') on each one's body, only to compare against the candidate's hash. Encoding the content hash directly in the archive filename (e.g. 'state.corrupt-<hash>-<ts>.json' or 'state.corrupt-<hash>.json') would let the dedup check be a single fs.existsSync(path.join(stateDir, 'state.corrupt-' + hash + '.json')) — O(1) instead of O(N), no read/rehash loop. Same correctness; smaller code; better perf as archives accumulate."
+    ],
+    "impacts": [
+      "Performance scales O(N) with archive count, where N grows unbounded across student sessions. Each call also allocates and discards the SHA-256 of every existing archive's body. In the worst case (a long-lived install with many corruption events), this is a perceptible delay on every loadState call."
+    ],
+    "evidence": "state.ts:118-144 in applied worker-4. Loop at L131-142 reads each /^state\\.corrupt-.*\\.json$/ entry's body and rehashes it just to compare to the candidate's hash.",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R4-001"
+    ]
+  },
+  {
+    "cluster_id": "C022",
+    "title": "probeOpts threading uses raw Partial<Record<>> rather than a named ProbeOptionsMap type",
+    "file": "mcp/server/src/tools/runPreflightProbe.ts",
+    "line_ranges": [
+      "10-60"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      2
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "design"
+    ],
+    "recommendations": [
+      "Add `export type ProbeOptionsMap = Partial<Record<ProbeId, ProbeOptions>>;` to mcp/server/src/preflight.ts and use it at runPreflightProbe.ts and any test fixtures that build the map. Non-blocking."
+    ],
+    "descriptions": [
+      "Cycle 6 H004 added Partial<Record<ProbeId, ProbeOptions>> as the new probeOpts shape on runPreflightProbe. The same shape will appear at every callsite that wants to thread spawn stubs through preflight. A named type alias (e.g. type ProbeOptionsMap = Partial<Record<ProbeId, ProbeOptions>>) at the preflight module's public surface would let the harness, tests, and future callers reuse the symbol rather than retyping the structural form."
+    ],
+    "impacts": [
+      "Minor readability / maintainability. Future callers will copy-paste the structural form instead of importing a named type. Refactoring the shape later (e.g., adding per-probe timeouts) becomes an N-callsite change."
+    ],
+    "evidence": "runPreflightProbe.ts:36 declares the parameter inline; tests/cycle6.preflight.test.ts likely repeats the literal shape when building the docker-stub fixture.",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R2-002"
+    ]
+  },
+  {
+    "cluster_id": "C024",
+    "title": "outputStyle.ts: enabledPlugins=[] (array) silently treated as 'plugin not enabled' rather than 'malformed settings'",
+    "file": "mcp/server/src/outputStyle.ts",
+    "line_ranges": [
+      "51-68"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      3
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "error-handling"
+    ],
+    "recommendations": [
+      "Add an `Array.isArray(parsed.enabledPlugins)` check alongside the typeof/null checks. If it is an array, emit a 'settings-file-malformed' (or 'settings-parse-error', see R3-001) warning instead of 'plugin-not-enabled'. This shifts the user toward fixing settings.json rather than re-enabling a plugin."
+    ],
+    "descriptions": [
+      "When enabledPlugins is a JSON array (e.g. `\"enabledPlugins\": []`), the typeof-object check passes (typeof [] === 'object') and the null check passes ([] !== null). The code then casts to Record<string, unknown> and reads PLUGIN_KEY, which returns undefined. The function falls through to the 'pluginEnabled !== true' branch and returns the same 'output-style-plugin-not-enabled' warning as the legitimate 'plugin key absent from object' case. The user sees a misleading 'enable the plugin' message when the actual problem is a malformed settings file."
+    ],
+    "impacts": [
+      "Diagnostic accuracy: the user gets the wrong remediation hint. They will dutifully run `claude plugins enable learning-output-style@claude-plugins-official` and the issue will persist because settings.json is structurally malformed (an array where an object was expected)."
+    ],
+    "evidence": "typeof (parsed as Record<string, unknown>)['enabledPlugins'] !== 'object' ||\n    (parsed as Record<string, unknown>)['enabledPlugins'] === null\n  ) {\n    return { ok: false, warning: PLUGIN_NOT_ENABLED_WARNING };\n  }",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R3-008"
+    ]
+  },
+  {
+    "cluster_id": "C025",
+    "title": "start.ts uses a type-cast workaround instead of declaring archivedTo on the warning shape",
+    "file": "mcp/server/src/tools/start.ts",
+    "line_ranges": [
+      "63-65"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      4
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "simplicity"
+    ],
+    "recommendations": [
+      "Add `archivedTo?: string` to the appropriate warning interface in warnings.ts; drop the cast at start.ts:64."
+    ],
+    "descriptions": [
+      "start.ts uses `(warning as { archivedTo?: string }).archivedTo = stateResult.archivedTo` to attach archivedTo to the warning. This is a type-cast workaround for a missing optional field on the warning union. Declaring archivedTo as an optional field on the relevant warning interface in warnings.ts would remove the cast."
+    ],
+    "impacts": [
+      "Mild — type-cast hides the structural change from the type system. A refactor renaming archivedTo would silently miss this site."
+    ],
+    "evidence": "start.ts:63-65 in applied worker-4.",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R4-003"
+    ]
+  },
+  {
+    "cluster_id": "C002",
+    "title": "Anti-weakening verification: T-014 amendment is STRONGER than original (good)",
+    "file": "tests/outputStyle.test.ts",
+    "line_ranges": [
+      "72-90"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      1
+    ],
+    "max_severity": "info",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "No action required. Filing as info to confirm the orchestrator's anti-weakening claim in synthesis-notes is verified."
+    ],
+    "descriptions": [
+      "Anti-weakening check on T-014 amendment. Original (cycle 1): asserted bare {ok:false, warning:<falsy>} on the plugin-disabled branch. New (cycle 6): asserts ok===false AND warning is defined AND warning.kind==='output-style-plugin-not-enabled' AND warning.message contains both the plugin key and 'claude plugins enable'. The new assertion is STRICTLY STRONGER — the original would pass with the new code (because warning is no longer falsy, the original would have failed; that's why the amendment was needed). Conclusion: amendment is justified by AC-1.1 / H002 and asserts MORE than the original. Anti-weakening intent preserved."
+    ],
+    "impacts": [
+      "None — this is a healthy amendment."
+    ],
+    "evidence": "expect(result.warning?.kind).toBe('output-style-plugin-not-enabled');\n    expect(result.warning?.message).toContain(ENABLED_PLUGIN_KEY);\n    expect(result.warning?.message).toContain('claude plugins enable');",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R1-006"
+    ]
+  },
+  {
+    "cluster_id": "C011",
+    "title": "scripts/cycle-e2e-pass.sh dispatches a one-branch case statement (YAGNI)",
+    "file": "scripts/cycle-e2e-pass.sh",
+    "line_ranges": [
+      "78-110"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      4
+    ],
+    "max_severity": "info",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "simplicity"
+    ],
+    "recommendations": [
+      "Collapse to a flat 'if scenario == E-008 then...' branch. Reintroduce the case statement when a second scenario needs distinct skip logic."
+    ],
+    "descriptions": [
+      "The script's scenario-dispatch switch handles only E-008 today. The scaffolding for additional scenarios is in place but no other case is wired up. Standard YAGNI: when there is exactly one case, write it as a flat branch and add the case statement only when a second scenario actually needs distinct handling."
+    ],
+    "impacts": [
+      "Minor — extra structural complexity that doesn't pay for itself yet."
+    ],
+    "evidence": "scripts/cycle-e2e-pass.sh:78-110 (case dispatch with single E-008 branch).",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R4-004"
+    ]
+  },
+  {
+    "cluster_id": "C012",
+    "title": "Anti-weakening verification: T-275 amendment INVERTS contract — justified by AC-7.2",
+    "file": "tests/selectPath.test.ts",
+    "line_ranges": [
+      "278-292"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      1
+    ],
+    "max_severity": "info",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "No action required."
+    ],
+    "descriptions": [
+      "Anti-weakening check on T-275 amendment. Original (cycle 1): asserted selectPath short-circuits with {ok:false} when loadState returns kind:'corrupt'. New (cycle 6): asserts {ok:true} AND saveState.toHaveBeenCalled(). This is a direct INVERSION of the assertion — but it is justified by AC-7.2 / H003: cycle 6 explicitly mandates that corrupt+archivedTo MUST mint a fresh state instead of refusing. The mock setup in the new T-275 includes archivedTo:'/x' which triggers the new branch in selectPath.ts L88. The original assertion CANNOT hold under the new contract (it would directly contradict AC-7.2). The amendment is necessary and the new test matches the inverted behavior precisely. Anti-weakening intent preserved (inversion is contract-mandated, not weakening)."
+    ],
+    "impacts": [
+      "None — this is the canonical case for orchestrator amendments where a later cycle inverts an earlier behavior. The synthesis-notes correctly flags this as a baseline-rebase, not a softening."
+    ],
+    "evidence": "stateMock.loadState.mockImplementationOnce(async () => ({\n      kind: 'corrupt',\n      archivedTo: '/x',\n      message: 'corrupt',\n    }));\n    const result: any = await selectPath({ projectRoot: root, slug: '01-orderbook-viewer' });\n    expect(result.ok).toBe(true);",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R1-007"
+    ]
+  },
+  {
+    "cluster_id": "C013",
+    "title": "Anti-weakening verification: T-281 amendment is STRONGER than original",
+    "file": "tests/phaseEngine.test.ts",
+    "line_ranges": [
+      "677-696"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      1
+    ],
+    "max_severity": "info",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "No action required."
+    ],
+    "descriptions": [
+      "Anti-weakening check on T-281 amendment. Original (cycle 4): asserted phases 2 & 3 prompts contain literal 'TBD' / 'cycle 5' (placeholder shape). New (cycle 6): asserts phases.length===3, phases[1].id==='p2-retry', phases[2].id==='p3-poll', specific target_ranges, verification.mode values, and that prompt contains '{{ poll_interval_ms }}'. The new assertion is STRICTLY STRONGER — it pins down the phase ids, target ranges, verification modes, AND the substitution placeholder, where the original only asserted a TBD-shaped prompt. The schema validity check (validatePhases) is preserved. Anti-weakening intent preserved (amendment is justified by AC-6.3 / H001 and asserts MORE than the original)."
+    ],
+    "impacts": [
+      "None — healthy amendment."
+    ],
+    "evidence": "expect(obj.phases[1].id).toBe('p2-retry');\n    expect(obj.phases[2].id).toBe('p3-poll');\n    expect(obj.phases[1].spots[0].target_range).toBe('103-114');\n    expect(obj.phases[2].spots[0].target_range).toBe('116-145');\n    expect(obj.phases[2].spots[0].prompt).toContain('{{ poll_interval_ms }}');",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R1-008"
+    ]
+  },
+  {
+    "cluster_id": "C014",
+    "title": "Anti-weakening verification: T-050 amendment preserves intent under new substrate",
+    "file": "tests/state.test.ts",
+    "line_ranges": [
+      "262-292"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      1
+    ],
+    "max_severity": "info",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "No action required. The pair (T-050, T-310) collectively asserts more than the original T-050 alone."
+    ],
+    "descriptions": [
+      "Anti-weakening check on T-050 amendment. Original (cycle 1): asserted 'two corruptions in same wall-clock second produce two distinct archive paths' using IDENTICAL bytes for both calls. New (cycle 6): same name and intent ('distinct archive paths under same-second timing') but uses two DIFFERENT byte sequences. The change is necessary because cycle 6 H003 introduces content-hash dedup — IDENTICAL bytes now collapse to ONE archive (asserted by T-310). The original test's IDENTICAL-bytes setup would now produce ONE archive, contradicting both the new dedup invariant AND the original's distinct-paths claim. The amendment splits the invariant into two: T-050 (distinct bytes → distinct archives, timestamp-disambiguation branch) and T-310 (identical bytes → one archive, dedup branch). Both invariants together are STRICTLY STRONGER than the original single invariant. Anti-weakening intent preserved."
+    ],
+    "impacts": [
+      "None — the amendment correctly rebases the invariant onto the new content-hash substrate without losing the original A18 timestamp-disambiguation property."
+    ],
+    "evidence": "const corruptBytes1 = '{ not-valid-json-corruption-A: 1';\n    const corruptBytes2 = '} broken-different-corruption-B [';\n    seedStateFile(root, corruptBytes1);\n\n    const r1 = await loadState(root);\n    seedStateFile(root, corruptBytes2);\n    const r2 = await loadState(root);",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R1-009"
+    ]
+  },
+  {
+    "cluster_id": "C015",
+    "title": "AC-3 bytes-equality invariant verified end-to-end",
+    "file": "mcp/server/src/state.ts",
+    "line_ranges": [
+      "146-173"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      1
+    ],
+    "max_severity": "info",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "correctness"
+    ],
+    "recommendations": [
+      "No action required. Filing as info because this was the cluster-C009 invariant from Phase F and is now demonstrably preserved."
+    ],
+    "descriptions": [
+      "AC-3 / AC-7.2 mandates 'archive bytes MUST match the corrupt state.json's pre-recovery bytes exactly.' Verified: archiveCorruptFile (state.ts L146-173) writes `content` (the raw string read from state.json at L29) directly via fsPromises.writeFile; no re-encoding, no JSON re-stringify, no pretty-printing. T-311 captures original bytes via fs.readFileSync(stateFile) (Buffer, no encoding) BEFORE invoking loadState, then compares the archive buffer via Buffer.compare === 0. Test passes per green.log. Including a non-ASCII tail byte (\\xff) in T-311's seed proves the path preserves bytes through Node's UTF-8 read → write cycle."
+    ],
+    "impacts": [
+      "None — invariant holds."
+    ],
+    "evidence": "await fsPromises.writeFile(archivePath, content, { flag: 'wx', mode: 0o600 });",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R1-010"
+    ]
+  },
+  {
+    "cluster_id": "C019",
+    "title": "archiveCounter module-level mutable state is now redundant given content-hash dedup",
+    "file": "mcp/server/src/state.ts",
+    "line_ranges": [
+      "13-18"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      4
+    ],
+    "max_severity": "info",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "simplicity"
+    ],
+    "recommendations": [
+      "Couple this with R4-001: when the filename embeds the content hash, archiveCounter is no longer needed for disambiguation and can be deleted."
+    ],
+    "descriptions": [
+      "Pre-cycle-6, two corruptions in the same wall-clock second needed disambiguation via a monotonic counter (archiveCounter at module scope). Cycle 6 H003 introduces content-hash dedup. The disambiguation is now redundant in the IDENTICAL-content case (which dedupes to 1 archive) and superseded by the content hash in the DISTINCT-content case (where two different hashes already differ in the filename even at the same timestamp). The module-level mutable state can be removed if the filename embeds the content hash (see R4-001)."
+    ],
+    "impacts": [
+      "Dead-weight complexity. Module-level mutable state increases test isolation surface and is ESM-unfriendly under live-reload tooling."
+    ],
+    "evidence": "state.ts:13-18 in applied worker-4; R4-001 documents the alternative naming scheme that eliminates this.",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R4-002"
+    ]
+  },
+  {
+    "cluster_id": "C020",
+    "title": "AC-1 / AC-6 verified: phases.json renames + content packs + cursor advance all hold",
+    "file": "paths/01-orderbook-viewer/phases.json",
+    "line_ranges": [
+      "31-84"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      1
+    ],
+    "max_severity": "info",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "correctness"
+    ],
+    "recommendations": [
+      "No action required."
+    ],
+    "descriptions": [
+      "AC-1 (H001) and AC-6 (E-004 ladder traversal) end-to-end check: (a) phases.json declares p2-retry with target_range 103-114 (L31-39) and p3-poll with target_range 116-145 (L58-66) — confirmed. (b) p3-spot-1 prompt contains literal '{{ poll_interval_ms }}' (L67) — confirmed. (c) substitutePromptOnly (personalization.ts L129-139) substitutes via /\\{\\{\\s*([a-zA-Z_][a-zA-Z0-9_]*)\\s*\\}\\}/g which matches both '{{ poll_interval_ms }}' (with spaces) and '{{poll_interval_ms}}' (without). T-303 asserts both forms are gone post-substitution and '5000' is present. (d) All 8 new content files present and non-empty (T-305 green). (e) p3 reference.md preserves '{{ poll_interval_ms }}' so requestHint-time substitution can fire (verified at reference.md L28). (f) T-315 confirms ladder rung-3 advance from p1-spot-1 → p2-retry/p2-spot-1 works with the renamed phase ids."
+    ],
+    "impacts": [
+      "None — all AC-1 and AC-6 properties hold."
+    ],
+    "evidence": "\"id\": \"p3-poll\",\n      \"title\": \"Phase 3 — Polling Loop with Failure Tolerance\",\n      \"explainer_md\": \"phases/p3.md\",",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R1-011"
+    ]
+  },
+  {
+    "cluster_id": "C021",
+    "title": "AC-4 probeOpts threading verified — both runProbe and runDeployRemediation forwarders use it",
+    "file": "mcp/server/src/tools/runPreflightProbe.ts",
+    "line_ranges": [
+      "33-59"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      1
+    ],
+    "max_severity": "info",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "correctness"
+    ],
+    "recommendations": [
+      "No action required."
+    ],
+    "descriptions": [
+      "AC-4 (H004) verified: runPreflightProbe.ts L36 calls runProbe(probeId, probeOpts[probeId] ?? {}) for the initial probe, and L56-58 passes a forwarder closure (pid) => runProbe(pid, probeOpts[pid] ?? {}) into runDeployRemediation. Both call sites use the same lookup pattern, so the harness's withDockerStub registration on probeOpts['docker-running'] flows through both the initial probe AND the precondition gate during remediation. T-312 (green) asserts the warning's probeId is exactly 'docker-running' (not 'sui-cli-version' or a host probe), confirming the gate stops at the first failing precondition with the harness-injected stub. The test also asserts no spawnSpy call matches cmd='pnpm' + args including 'deploy-all', confirming the gate short-circuits before runRealDeploy."
+    ],
+    "impacts": [
+      "None — AC-4 holds."
+    ],
+    "evidence": "const deployResult = await runDeployRemediation(\n    probeResult.action,\n    (pid) => runProbe(pid as ProbeId, probeOpts[pid as ProbeId] ?? {}),\n  );",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R1-012"
+    ]
+  },
+  {
+    "cluster_id": "C026",
+    "title": "Content auto.md vs reference.md: structural redundancy is intentional, not over-engineered",
+    "file": "paths/01-orderbook-viewer/rungs/p2-spot-1/auto.md",
+    "line_ranges": [
+      "1-30"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      4
+    ],
+    "max_severity": "info",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "simplicity"
+    ],
+    "recommendations": [
+      "No action. If a future cycle wants to dedup, the engine could derive auto.md by stripping the markdown frame from reference.md, but that's premature."
+    ],
+    "descriptions": [
+      "Both auto.md and reference.md contain the same code snippet for each spot. This looks redundant at first glance but is intentional: auto.md is the splice payload (raw code, no markdown frame) used by the engine's auto-write step; reference.md wraps the same code in markdown narrative for human reading. Verified across all 8 new content files. Not a finding; flagging to close out the synthesis-notes' 'review the content packs' carry-forward."
+    ],
+    "impacts": [
+      "None — the separation is correct."
+    ],
+    "evidence": "All 8 content files at paths/01-orderbook-viewer/rungs/{p2,p3}-spot-1/{hint,reference,auto}.md and phases/{p2,p3}.md.",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R4-005"
+    ]
+  }
+]

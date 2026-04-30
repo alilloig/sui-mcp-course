@@ -1,0 +1,389 @@
+[
+  {
+    "id": "T-001",
+    "name": "plugin.json parses and declares required top-level keys",
+    "behavior": "JSON.parse('.claude-plugin/plugin.json') succeeds and the parsed object contains string/object values for keys: name, version, description, mcpServers, commands, agents, skills, hooks. mcpServers is a non-empty object.",
+    "kind": "unit",
+    "target_file": ".claude-plugin/plugin.json",
+    "test_file": "tests/registry.test.ts",
+    "covers_contract_requirement": "A1"
+  },
+  {
+    "id": "T-002",
+    "name": "plugin.json mcpServers entry references the built MCP server entrypoint",
+    "behavior": "The mcpServers object in plugin.json contains at least one server whose command/args reference a built artifact path under mcp/server/ (e.g. dist/index.js or src/index.ts via tsx). Asserts the MCP server is discoverable from the manifest.",
+    "kind": "unit",
+    "target_file": ".claude-plugin/plugin.json",
+    "test_file": "tests/registry.test.ts",
+    "covers_contract_requirement": "A1"
+  },
+  {
+    "id": "T-003",
+    "name": "tsc --noEmit on mcp/server/ exits zero under strict mode",
+    "behavior": "Spawn `pnpm --filter ./mcp/server exec tsc --noEmit` (or equivalent) from repo root and assert exit code is 0. Proves the strict TypeScript surface compiles without errors. Marked integration because it spawns the compiler.",
+    "kind": "integration",
+    "target_file": "mcp/server/tsconfig.json",
+    "test_file": "tests/start.tool.test.ts",
+    "covers_contract_requirement": "A2"
+  },
+  {
+    "id": "T-004",
+    "name": "start tool response has exactly the documented top-level shape",
+    "behavior": "Calling start({ projectRoot: <fixture> }) returns an object whose own enumerable keys are exactly the set { 'outputStyleOk', 'preflight', 'paths', 'state', 'warnings' } — no extra keys, no missing keys.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/start.ts",
+    "test_file": "tests/start.tool.test.ts",
+    "covers_contract_requirement": "A3"
+  },
+  {
+    "id": "T-005",
+    "name": "start tool returns outputStyleOk as a boolean",
+    "behavior": "On the start response, typeof response.outputStyleOk === 'boolean'. No null, no undefined, no string.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/start.ts",
+    "test_file": "tests/start.tool.test.ts",
+    "covers_contract_requirement": "A3"
+  },
+  {
+    "id": "T-006",
+    "name": "start tool preflight field is exactly { skipped: true, reason: 'cycle-1' }",
+    "behavior": "response.preflight deep-equals { skipped: true, reason: 'cycle-1' }. Asserts the literal sentinel; cycle 2+ will replace it.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/start.ts",
+    "test_file": "tests/start.tool.test.ts",
+    "covers_contract_requirement": "A3"
+  },
+  {
+    "id": "T-007",
+    "name": "start tool state field is null in cycle 1",
+    "behavior": "response.state === null (strict equality, not undefined, not {}).",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/start.ts",
+    "test_file": "tests/start.tool.test.ts",
+    "covers_contract_requirement": "A3"
+  },
+  {
+    "id": "T-008",
+    "name": "start tool paths field is an array of PathInfo objects",
+    "behavior": "Array.isArray(response.paths) is true; every element has at minimum a string `slug` and `title`. Empty array is permitted.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/start.ts",
+    "test_file": "tests/start.tool.test.ts",
+    "covers_contract_requirement": "A3"
+  },
+  {
+    "id": "T-009",
+    "name": "start tool warnings field is an array of RegistryWarning objects",
+    "behavior": "Array.isArray(response.warnings) is true; every element has a string `kind` and string `message`. Empty array is permitted.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/start.ts",
+    "test_file": "tests/start.tool.test.ts",
+    "covers_contract_requirement": "A3"
+  },
+  {
+    "id": "T-010",
+    "name": "start tool paths field is exactly the registry's paths output",
+    "behavior": "When the registry scanner is invoked against the same fixture root, registry.paths deep-equals start.response.paths. Proves start delegates to registry without filtering or reshaping.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/start.ts",
+    "test_file": "tests/start.tool.test.ts",
+    "covers_contract_requirement": "A3"
+  },
+  {
+    "id": "T-011",
+    "name": "start tool warnings field is exactly the registry's warnings output",
+    "behavior": "When the registry scanner is invoked against the same fixture root, registry.warnings deep-equals start.response.warnings. Proves start does not drop or fabricate warnings.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/start.ts",
+    "test_file": "tests/start.tool.test.ts",
+    "covers_contract_requirement": "A3"
+  },
+  {
+    "id": "T-012",
+    "name": "start tool outputStyleOk reflects the outputStyle probe result",
+    "behavior": "Stub the outputStyle module to return true; start.response.outputStyleOk === true. Stub it to return false; start.response.outputStyleOk === false. Proves start delegates to the probe rather than recomputing.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/start.ts",
+    "test_file": "tests/start.tool.test.ts",
+    "covers_contract_requirement": "A4"
+  },
+  {
+    "id": "T-013",
+    "name": "outputStyle probe returns true when settings.json has the plugin enabled",
+    "behavior": "With a temp HOME containing .claude/settings.json with { enabledPlugins: { 'learning-output-style@claude-plugins-official': true } }, the probe returns ok=true with no warning.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/outputStyle.ts",
+    "test_file": "tests/outputStyle.test.ts",
+    "covers_contract_requirement": "A4"
+  },
+  {
+    "id": "T-014",
+    "name": "outputStyle probe returns false when settings.json has the plugin disabled",
+    "behavior": "With settings.json containing { enabledPlugins: { 'learning-output-style@claude-plugins-official': false } }, the probe returns ok=false. No warning is emitted because the file is well-formed.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/outputStyle.ts",
+    "test_file": "tests/outputStyle.test.ts",
+    "covers_contract_requirement": "A4"
+  },
+  {
+    "id": "T-015",
+    "name": "outputStyle probe returns false with warning when settings.json is missing",
+    "behavior": "With a temp HOME that has no .claude/settings.json, the probe returns ok=false plus a structured warning whose kind identifies the missing-file case (e.g. 'settings-file-missing'). Probe does NOT throw.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/outputStyle.ts",
+    "test_file": "tests/outputStyle.test.ts",
+    "covers_contract_requirement": "A4"
+  },
+  {
+    "id": "T-016",
+    "name": "outputStyle probe returns false with warning when settings.json is malformed JSON",
+    "behavior": "With a settings.json containing invalid JSON (e.g. '{ not json'), the probe returns ok=false plus a structured warning whose kind identifies the parse failure (e.g. 'settings-file-malformed'). Probe does NOT throw.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/outputStyle.ts",
+    "test_file": "tests/outputStyle.test.ts",
+    "covers_contract_requirement": "A4"
+  },
+  {
+    "id": "T-017",
+    "name": "outputStyle probe returns false when enabledPlugins key is absent",
+    "behavior": "With a well-formed settings.json that has no enabledPlugins property at all, the probe returns ok=false. This is the silent-disable path: no warning is required, but no throw either.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/outputStyle.ts",
+    "test_file": "tests/outputStyle.test.ts",
+    "covers_contract_requirement": "A4"
+  },
+  {
+    "id": "T-018",
+    "name": "start performs zero filesystem writes when outputStyleOk is false (AC-1.3 invariant)",
+    "behavior": "Take a recursive snapshot of mtime+content for the fixture project root before invoking start under conditions that force outputStyleOk=false. Invoke start. Re-snapshot. Assert the two snapshots are byte-identical and no new files exist. Also spy on fs.writeFile/fs.writeFileSync/fs.appendFile/fs.mkdir/fs.rename and assert zero call count. The test must fail if even one debug-write slips in.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/start.ts",
+    "test_file": "tests/start.tool.test.ts",
+    "covers_contract_requirement": "A4"
+  },
+  {
+    "id": "T-019",
+    "name": "registry surfaces the well-formed 01-orderbook-viewer path",
+    "behavior": "Pointing the registry scanner at the real `paths/` directory of the project (or a fixture mirror containing 01-orderbook-viewer), the result.paths array contains exactly one entry whose slug === '01-orderbook-viewer', with title and summary populated from path.json.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/registry.ts",
+    "test_file": "tests/registry.test.ts",
+    "covers_contract_requirement": "A5"
+  },
+  {
+    "id": "T-020",
+    "name": "registry surfaces fake fourth path from fixture without code changes (parametricity proof)",
+    "behavior": "Point the registry scanner at tests/fixtures/paths/ (a fixture root containing 04-fake-path/ with valid path.json + phases.json and nothing else). The result.paths array contains an entry with slug === '04-fake-path'. No engine code edit is needed for this to work; the test merely passes a different scan root.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/registry.ts",
+    "test_file": "tests/registry.test.ts",
+    "covers_contract_requirement": "A6"
+  },
+  {
+    "id": "T-021",
+    "name": "registry skips path with malformed path.json and emits structured warning",
+    "behavior": "Point scanner at tests/fixtures/paths-malformed/ (a fixture root where path.json is broken JSON). result.paths is empty (or excludes the bad dir). result.warnings contains exactly one entry with kind === 'malformed-path-json', a `path` field naming the offending file, and a non-empty `message` describing the parse error.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/registry.ts",
+    "test_file": "tests/registry.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-022",
+    "name": "registry surfaces other well-formed paths even when one is malformed",
+    "behavior": "Construct a temp scan root containing both a malformed path dir AND a well-formed dir (e.g. 04-fake-path). result.paths includes the well-formed one; result.warnings includes the malformed-path-json warning for the bad one. Proves a single bad path does not poison the scan.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/registry.ts",
+    "test_file": "tests/registry.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-023",
+    "name": "registry skips dir missing path.json with structured warning",
+    "behavior": "Construct a temp scan root containing a child directory that has phases.json but no path.json. result.paths excludes it; result.warnings contains an entry with a kind identifying the missing file (e.g. 'missing-path-json'), the offending dir path, and a message.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/registry.ts",
+    "test_file": "tests/registry.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-024",
+    "name": "registry returns empty paths and empty-paths-dir warning when paths/ exists but is empty",
+    "behavior": "Point scanner at tests/fixtures/paths-empty/ (an empty directory containing only .gitkeep). result.paths deep-equals []. result.warnings contains exactly one entry with kind === 'empty-paths-dir' and a non-empty message — no other warnings.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/registry.ts",
+    "test_file": "tests/registry.test.ts",
+    "covers_contract_requirement": "A8"
+  },
+  {
+    "id": "T-025",
+    "name": "registry returns empty paths and no-paths-dir warning when paths/ is absent",
+    "behavior": "Point scanner at a path that does not exist on disk (e.g. /tmp/nonexistent-root/paths). Scanner does NOT throw. result.paths deep-equals []. result.warnings contains exactly one entry with kind === 'no-paths-dir' and a non-empty message.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/registry.ts",
+    "test_file": "tests/registry.test.ts",
+    "covers_contract_requirement": "A9"
+  },
+  {
+    "id": "T-026",
+    "name": "registry skips non-directory entries under paths/",
+    "behavior": "Construct a temp scan root containing a regular file (e.g. README.txt) alongside one well-formed path dir. The file is silently ignored; result.paths contains only the well-formed entry; no warning is emitted for the file (this is not a path attempt, so no warning needed).",
+    "kind": "unit",
+    "target_file": "mcp/server/src/registry.ts",
+    "test_file": "tests/registry.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-027",
+    "name": "engine source contains zero string literals matching '01-orderbook-viewer'",
+    "behavior": "Walk the directory tree under mcp/server/src/, commands/, skills/course-engine/, and scripts/e2e/ (excluding tests/, paths/, and node_modules/). For each .ts/.tsx/.md/.json file, read content and assert it contains zero occurrences of the literal string '01-orderbook-viewer'. The slug must appear ONLY under paths/ and tests/fixtures/.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/registry.ts",
+    "test_file": "tests/registry.test.ts",
+    "covers_contract_requirement": "A10"
+  },
+  {
+    "id": "T-028",
+    "name": "harness boots MCP server in-process and start tool returns documented shape",
+    "behavior": "Import scripts/e2e/harness.ts; invoke its boot helper against tests/fixtures/paths/ as the project root; call the start tool through the harness; assert the response object has the documented shape ({ outputStyleOk, preflight, paths, state, warnings } with correct types). No behavior assertions beyond shape — cycles 2+ add those.",
+    "kind": "integration",
+    "target_file": "scripts/e2e/harness.ts",
+    "test_file": "tests/start.tool.test.ts",
+    "covers_contract_requirement": "A12"
+  },
+  {
+    "id": "T-029",
+    "name": "outputStyle.ts source references no environment variables matching CLAUDE_OUTPUT_STYLE",
+    "behavior": "Read mcp/server/src/outputStyle.ts as a string. Assert the content contains zero occurrences of 'CLAUDE_OUTPUT_STYLE' and zero occurrences of 'process.env.CLAUDE'. Static-analysis-style guard against the forbidden runtime probe.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/outputStyle.ts",
+    "test_file": "tests/outputStyle.test.ts",
+    "covers_contract_requirement": "A13"
+  },
+  {
+    "id": "T-030",
+    "name": "outputStyle.ts source references no parent-process inspection or system-prompt scraping",
+    "behavior": "Read mcp/server/src/outputStyle.ts as a string. Assert content contains zero occurrences of 'process.ppid', 'parent_process', '/proc/', 'systemPrompt', 'system_prompt', and 'getppid'. Confirms no parent-process inspection or prompt scraping.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/outputStyle.ts",
+    "test_file": "tests/outputStyle.test.ts",
+    "covers_contract_requirement": "A13"
+  },
+  {
+    "id": "T-031",
+    "name": "outputStyle.ts only reads from ~/.claude/settings.json (positive path proof)",
+    "behavior": "Spy on fs.readFile/fs.readFileSync. Invoke the probe. Assert every read call's path argument resolves to <os.homedir()>/.claude/settings.json — no other paths are touched.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/outputStyle.ts",
+    "test_file": "tests/outputStyle.test.ts",
+    "covers_contract_requirement": "A13"
+  },
+  {
+    "id": "T-032",
+    "name": "start response object contains no field with kind === 'shell'",
+    "behavior": "Recursively walk the start response object. Assert no nested object has a property `kind` whose value is the string 'shell'. Cycle 1 must not surface any shell action; that surface is reserved for runPreflightProbe.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/start.ts",
+    "test_file": "tests/start.tool.test.ts",
+    "covers_contract_requirement": "A14"
+  },
+  {
+    "id": "T-033",
+    "name": "start.ts source contains no 'shell' action literal",
+    "behavior": "Read mcp/server/src/tools/start.ts as a string. Assert content contains zero occurrences of the literal patterns matching kind:'shell' in single or double quotes. Static guard so a future implementer cannot smuggle a shell action into start.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/start.ts",
+    "test_file": "tests/start.tool.test.ts",
+    "covers_contract_requirement": "A14"
+  },
+  {
+    "id": "T-034",
+    "name": "path.ts schema accepts a well-formed path.json",
+    "behavior": "validatePath({ slug: '01-orderbook-viewer', title: 'Orderbook Viewer', summary: 'short', personalization_options: ['poll_interval_ms','pool_subset'], build_command: 'pnpm build' }) returns ok=true with the parsed value. No errors.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/schemas/path.ts",
+    "test_file": "tests/registry.test.ts",
+    "covers_contract_requirement": "A5"
+  },
+  {
+    "id": "T-035",
+    "name": "path.ts schema rejects path.json missing required slug field",
+    "behavior": "validatePath({ title: 'x', summary: 'y', personalization_options: [], build_command: 'pnpm build' }) returns ok=false plus an error indicating the missing `slug` field. Tight coupling to the field name so a future implementer can't paper over it.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/schemas/path.ts",
+    "test_file": "tests/registry.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-036",
+    "name": "path.ts schema rejects path.json with personalization_options containing unknown enum value",
+    "behavior": "validatePath with personalization_options including 'render_style' (a parked option per spec) returns ok=false with an error referencing the invalid enum value. Confirms the enum is closed to the cycle-1 MVP set.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/schemas/path.ts",
+    "test_file": "tests/registry.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-037",
+    "name": "phases.ts schema accepts a phases.json with three phases each having at least one spot",
+    "behavior": "validatePhases({ phases: [{ id: 'p1', spots: [{ id: 's1' }] }, { id: 'p2', spots: [{ id: 's2' }] }, { id: 'p3', spots: [{ id: 's3' }] }] }) returns ok=true.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/schemas/phases.ts",
+    "test_file": "tests/registry.test.ts",
+    "covers_contract_requirement": "A5"
+  },
+  {
+    "id": "T-038",
+    "name": "phases.ts schema rejects phases.json with a phase that has zero spots",
+    "behavior": "validatePhases({ phases: [{ id: 'p1', spots: [] }] }) returns ok=false with a specific error message identifying the empty-spots phase. Cycle 1 schema-only obligation per contract clause for phases.json.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/schemas/phases.ts",
+    "test_file": "tests/registry.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-039",
+    "name": "phases.ts schema rejects phases.json with no phases array",
+    "behavior": "validatePhases({}) returns ok=false with an error identifying the missing `phases` field.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/schemas/phases.ts",
+    "test_file": "tests/registry.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-040",
+    "name": "registry emits schema-invalid warning for path.json that parses but fails validation",
+    "behavior": "Construct a fixture path dir whose path.json is well-formed JSON but missing the required slug field. Scanner result.paths excludes it; result.warnings contains an entry with kind identifying schema invalidity (e.g. 'invalid-path-json' or 'schema-invalid'), the path, and a message naming the failed field.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/registry.ts",
+    "test_file": "tests/registry.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-041",
+    "name": "registry skips path with missing phases.json and emits structured warning",
+    "behavior": "Construct a fixture path dir with valid path.json but no phases.json. Scanner result.paths excludes it; result.warnings contains an entry whose kind matches /phases/i, with the offending dir path, and a message. Closes the C001 cluster from cycle 1's consolidated review (registry never invoked validatePhases).",
+    "kind": "unit",
+    "target_file": "mcp/server/src/registry.ts",
+    "test_file": "tests/registry.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-042",
+    "name": "registry skips path with malformed phases.json and emits structured warning",
+    "behavior": "Construct a fixture path dir with valid path.json and broken-JSON phases.json. Scanner result.paths excludes it; result.warnings contains a /phases/i entry with the offending file's dir.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/registry.ts",
+    "test_file": "tests/registry.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-043",
+    "name": "registry skips path with schema-invalid phases.json (zero spots) and emits structured warning",
+    "behavior": "Construct a fixture path dir with valid path.json and a phases.json that parses but has a phase with zero spots (schema rejection). Scanner result.paths excludes it; result.warnings contains a /phases/i entry whose message references spots/phases/validation.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/registry.ts",
+    "test_file": "tests/registry.test.ts",
+    "covers_contract_requirement": "A7"
+  }
+]

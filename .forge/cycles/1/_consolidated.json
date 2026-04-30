@@ -1,0 +1,1138 @@
+[
+  {
+    "cluster_id": "C001",
+    "title": "Registry never invokes validatePhases — phases.json schema tests don't constrain the registry",
+    "file": "mcp/server/src/registry.ts",
+    "line_ranges": [
+      "59-116",
+      "59-115",
+      "63-71",
+      "1-119"
+    ],
+    "agreement_count": 3,
+    "reviewers": [
+      1,
+      2,
+      5
+    ],
+    "max_severity": "high",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "correctness",
+      "design",
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "Inside the per-entry loop (after path.json validates), read paths.join(slugDir, 'phases.json'), parse, run validatePhases. On read/parse/schema failure emit a structured warning ('missing-phases-json' | 'malformed-phases-json' | 'invalid-phases-json') and skip the entry, mirroring the path.json logic.",
+      "After validatePath succeeds, assert validation.value.slug === entry.name; on mismatch emit a structured warning ('slug-dir-mismatch') with both values and skip the entry, OR canonicalize on entry.name and treat the path.json slug field as advisory.",
+      "Replace existsSync with try/readFileSync; on ENOENT emit 'missing-path-json', on other errors emit a distinct 'unreadable-path-json' warning carrying the OS-level error message.",
+      "In scanRegistry, after validatePath succeeds, also read paths/<slug>/phases.json and run validatePhases on it. On failure, push a structured warning (kind 'malformed-phases-json' / 'invalid-phases-json') and skip the path — same flow as path.json. This keeps the schemas module load-bearing and makes the registry the single chokepoint for path well-formedness.",
+      "Add a registry test: construct a path with valid path.json but phases.json missing the phases array (or with a zero-spot phase), and assert (a) the path is omitted from result.paths and (b) result.warnings contains a phases-schema warning identifying the file. Either that, or amend the contract to declare phases.json validation out of scope for cycle 1's registry."
+    ],
+    "descriptions": [
+      "The scanner reads and validates path.json only. The contract for registry.ts states it 'Skips non-directories, malformed JSON, schema-invalid files, and dirs missing path.json' — implying phases.json is part of what makes a path 'well-formed'. validatePhases() is exported and unit-tested directly (T-037..T-039), but the registry loop never calls it. A path dir with a valid path.json and a malformed or schema-invalid phases.json will surface as a healthy PathInfo with zero warnings.",
+      "scanRegistry iterates directory entries by entry.name but emits PathInfo.slug from validation.value.slug (the value inside path.json). If a dir is named '01-orderbook-viewer' but its path.json declares slug 'something-else', the registry happily reports slug 'something-else'. The dir-name vs slug-field invariant the contract implies ('paths/<slug>/path.json') is unverified.",
+      "fs.existsSync is the recommended-against probe — it returns false on ANY error (ENOENT, EACCES, broken symlink). On a permission-restricted path.json the registry will report 'missing-path-json' even though the file exists. Also, existsSync followed by readFileSync is a TOCTOU pattern (irrelevant in single-user CLI but still antipattern). Contract A7 names a 'malformed' / 'missing' distinction; conflating unreadable with missing breaks that distinction.",
+      "registry.ts imports validatePath but never imports or invokes validatePhases. The contract names phases.json as a first-class shape contract (Files line for schemas/phases.ts, A5 + the contract behavior 'lists every well-formed path it discovers'), and a path is by definition phase-bearing content. Today a directory with a valid path.json but a corrupt or absent phases.json is reported as a healthy PathInfo. The schemas/phases.ts module is therefore dead code at the registry boundary — it only exists for direct test calls. This is an integration gap between two engine modules that were designed to compose.",
+      "T-037/T-038/T-039 exercise validatePhases() in isolation, but no test wires phases.json through the registry. The current implementation never reads or validates phases.json — it only validates path.json. A path with a missing or schema-invalid phases.json (e.g. zero-spot phase) is happily surfaced in result.paths with no warning, and no test would catch this. The contract's 'schema-invalid files' clause for the registry is therefore only enforced for path.json. An implementer could ship a registry that completely ignores phases.json (as this one does) and pass green, even though contract.md/Files names phases.ts as a 'runtime validator for phases.json schema-only'."
+    ],
+    "impacts": [
+      "Cycle 4 (the only consumer of phase semantics) will receive PathInfos that the engine vouched for, then crash when it tries to load phases. The 'parametricity' guarantee in A6 is weaker than advertised: dropping a path dir with a broken phases.json gets quiet acceptance instead of a structured warning. The contract's 'phases.json schema-only validation' obligation is not enforced anywhere observable.",
+      "Cycle 2+ tools that resolve a slug back to a filesystem dir (e.g. to load phases or run a build_command) cannot rely on the slug to find the dir. Two paths with the same internal slug across different dirs would dedupe weirdly downstream. No current test catches this because T-019 fixture and T-020 fixture both have matching dir names.",
+      "User-visible warning misidentifies the cause; debugging requires running stat manually. Not a green-test failure because no fixture exercises a permission-denied path.json.",
+      "A future cycle (4) that consumes phases.json will either discover the malformed file at lesson-render time (late failure) or have to re-scan the directory itself, duplicating registry responsibility. Worse, downstream code can rely on the registry's surface as 'these paths are valid' when in reality only path.json was checked. The 'self-contained content' promise of paths/<slug>/ is broken because the engine doesn't enforce its own structural invariants.",
+      "Phases-schema regressions are undetected at the registry level. A path with malformed phases.json will be advertised to learners and only blow up downstream in cycle 4 when phases are consumed."
+    ],
+    "evidence": "    if (!fs.existsSync(pathJsonFile)) {\n      warnings.push({\n        kind: 'missing-path-json',",
+    "confidence_spread": [
+      "high",
+      "medium",
+      "low"
+    ],
+    "source_ids": [
+      "R1-001",
+      "R1-002",
+      "R1-007",
+      "R2-001",
+      "R5-001"
+    ],
+    "resolved": true,
+    "resolution": "Fixed in remediation: registry.ts now imports validatePhases and validates phases.json after path.json. Three new tests T-041/T-042/T-043 added (missing/malformed/schema-invalid phases.json). 44/44 tests pass post-fix. Original disputed_severity=true (R5 medium vs R1+R2 high) is now false: consolidator verified high-severity in review.md, and the underlying issue is resolved."
+  },
+  {
+    "cluster_id": "C002",
+    "title": "scanRegistry conflates ENOENT with other readdir errors as 'no-paths-dir'",
+    "file": "mcp/server/src/registry.ts",
+    "line_ranges": [
+      "27-39"
+    ],
+    "agreement_count": 2,
+    "reviewers": [
+      1,
+      3
+    ],
+    "max_severity": "medium",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "correctness",
+      "error-handling"
+    ],
+    "recommendations": [
+      "Inspect err.code: ENOENT → 'no-paths-dir'; ENOTDIR → 'paths-not-a-directory'; everything else → 'paths-read-error' with the underlying message. T-025 only exercises the ENOENT path so this is currently green by coincidence.",
+      "Bind the error (catch (err)) and branch on err.code: ENOENT -> 'no-paths-dir'; ENOTDIR -> a new 'paths-not-a-directory' kind; EACCES -> 'paths-dir-unreadable'; otherwise a generic 'paths-dir-error' kind that includes err.message in the warning. Preserve the original message so the user can act on it."
+    ],
+    "descriptions": [
+      "The catch block returns kind 'no-paths-dir' for ANY error from readdirSync — including EACCES (permission denied), ENOTDIR (path is a file), EMFILE (file table full). Only ENOENT semantically matches 'absent paths directory' per A9. A path that exists but is unreadable will be reported as absent, hiding the real cause from the user.",
+      "The try/catch around fs.readdirSync uses an anonymous catch (no err binding) and unconditionally returns the 'no-paths-dir' warning. EACCES (permission denied), ENOTDIR (paths/ is a regular file), EMFILE/ENFILE (descriptor exhaustion), and ELOOP (symlink loop) all collapse to the same misleading 'Paths directory not found' message. The original error message is dropped entirely."
+    ],
+    "impacts": [
+      "User runs /sui-deepbook-course:start, sees 'no paths installed', and assumes they need to clone path content — when actually their paths/ dir has wrong permissions and is unreadable. Diagnosis loop is broken. The empty-paths-dir vs no-paths-dir distinction in A8/A9 was specifically introduced to make this discoverable; ENOENT-only handling preserves it.",
+      "When a user's paths/ directory exists but is unreadable (chmod 000, owned by another user, replaced with a file), the start tool tells them the directory is missing. Diagnosis path is wrong; the user will look for a missing directory rather than fix the permissions or the misnamed file. Test T-025 only exercises the genuine ENOENT case, so this misclassification ships unobserved."
+    ],
+    "evidence": "} catch {\n    return {\n      paths: [],\n      warnings: [\n        {\n          kind: 'no-paths-dir',\n          message: `Paths directory not found: ${scanRoot}`,\n        },\n      ],\n    };\n  }",
+    "confidence_spread": [
+      "medium",
+      "high"
+    ],
+    "source_ids": [
+      "R1-003",
+      "R3-001"
+    ]
+  },
+  {
+    "cluster_id": "C010",
+    "title": "outputStyle probe collapses ENOENT and read-error into 'settings-file-missing'",
+    "file": "mcp/server/src/outputStyle.ts",
+    "line_ranges": [
+      "20-31",
+      "21-31"
+    ],
+    "agreement_count": 2,
+    "reviewers": [
+      1,
+      3
+    ],
+    "max_severity": "medium",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "correctness",
+      "error-handling"
+    ],
+    "recommendations": [
+      "catch (err) and inspect err.code; emit kind 'settings-file-missing' only on ENOENT, otherwise 'settings-file-unreadable' with the OS-level message. T-015 specifies a missing-file fixture so it would still pass; an additional unreadable-file scenario is not currently covered.",
+      "Bind the error (catch (err)) and either include err.message in the warning, or branch on err.code to emit distinct warning kinds for ENOENT vs EACCES vs EISDIR. At minimum, append `: ${err instanceof Error ? err.message : String(err)}` to the message field, mirroring the pattern already used a few lines below for JSON.parse failures."
+    ],
+    "descriptions": [
+      "Any failure of fs.readFileSync — EACCES, EISDIR, EMFILE — is reported as 'settings-file-missing'. The kind suggests an absent file; the underlying cause may be a permission error on a present file. The error object is discarded (catch with no binding), so users have no signal to diagnose.",
+      "The catch around fs.readFileSync(settingsPath, 'utf8') has no err binding and unconditionally returns the 'settings-file-missing' warning. EACCES (settings.json owned by another user / chmod 000), EISDIR (settings.json is a directory), ENOTDIR (~/.claude is a file), and any other I/O failure all surface as 'Settings file not found'."
+    ],
+    "impacts": [
+      "If ~/.claude/settings.json exists but is unreadable for the running process, the user sees 'settings file not found' and is told to enable a plugin that may already be enabled. This is a soft correctness regression of the contract's 'structured note' obligation in line 17 of contract.md ('returns false with a structured note').",
+      "The student cannot diagnose why the learning-output-style plugin is not detected. They see 'file not found' and create the file, but the real problem is permissions or a typo elsewhere in the path. Because outputStyleOk is advisory in cycle 1, the consequence is mild now, but the same probe is the load-bearing input to the AC-1.3 invariant in later cycles."
+    ],
+    "evidence": "  try {\n    raw = fs.readFileSync(settingsPath, 'utf8');\n  } catch {\n    return {\n      ok: false,\n      warning: {\n        kind: 'settings-file-missing',\n        message: `Settings file not found at ${settingsPath}`,\n      },\n    };\n  }",
+    "confidence_spread": [
+      "medium",
+      "high"
+    ],
+    "source_ids": [
+      "R1-004",
+      "R3-002"
+    ]
+  },
+  {
+    "cluster_id": "C018",
+    "title": "scripts/e2e/harness.ts hard-codes the 'start' tool name and bypasses the MCP transport entirely",
+    "file": "scripts/e2e/harness.ts",
+    "line_ranges": [
+      "13-37"
+    ],
+    "agreement_count": 2,
+    "reviewers": [
+      2,
+      4
+    ],
+    "max_severity": "medium",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "design",
+      "simplicity"
+    ],
+    "recommendations": [
+      "Either (a) genuinely boot the MCP server: spawn `node dist/index.js` (or tsx) over stdio, connect a `Client` from `@modelcontextprotocol/sdk/client/...`, and route callTool through it — then the harness has zero per-tool knowledge; or (b) re-use the same registration mechanism by having index.ts export a `registerTools(server)` factory that the harness can mount on an in-memory transport. Either way, remove the per-tool if-branch and the synthetic envelope.",
+      "Either (a) actually spawn the MCP server via stdio and use the SDK's Client to call tools (a few extra lines, but matches the name), or (b) rename to `inProcessDispatcher` and drop the HarnessInstance/BootOptions ceremony — just export `callStart(projectRoot)` returning the same shape. The contract says 'boot the MCP server'; option (a) is the honest read."
+    ],
+    "descriptions": [
+      "The harness's callTool dispatcher contains a literal `if (toolName === 'start')` branch that imports and calls runStart directly, then synthesizes an MCP-shaped { content: [{ type: 'text', text: JSON.stringify(...) }] } envelope. This means: (1) every future tool added in cycles 2–5 (preflight probe, lesson flow, etc.) requires editing harness.ts to add another if-branch — the harness has hard-coded knowledge of the tool registry that index.ts is supposed to own; (2) the harness never exercises the actual stdio transport, MCP framing, zod arg validation, or the server.tool registration in index.ts, so 'integration test' is misnamed — it's a thin wrapper around a direct function call. The contract (A12) says 'boots the MCP server'; this implementation does not boot the server.",
+      "bootHarness is documented (contract A12) as 'boots the MCP server and successfully invokes start'. The implementation never instantiates McpServer, never connects a transport, and contains a single switch branch (`if (toolName === 'start')`) that calls runStart directly. The throw on unknown tool is unreachable in cycle 1 (start is the only tool registered). HarnessInstance interface, BootOptions interface, and the no-op shutdown() add ceremony around what is effectively a one-line wrapper over runStart."
+    ],
+    "impacts": [
+      "Two coupled hazards. (a) Cycle 2 will add runPreflightProbe and the harness will need a parallel branch — drift between index.ts's registered tools and harness.ts's mock-dispatcher is silent until a scenario fires. (b) Real MCP transport bugs (zod schema mismatch, argument shape, JSON-RPC envelope) cannot be caught by future scenarios because the harness never speaks MCP. The integration claim in T-028 is weaker than the test name suggests.",
+      "The harness misrepresents itself: tests think they exercise the MCP transport surface, but they bypass it entirely. Cycle 2-5 scenarios that depend on actual MCP wire behavior will need a rewrite. Today's complexity is also dishonest — the interfaces imply a non-trivial harness."
+    ],
+    "evidence": "if (toolName === 'start') {\n      const root = typeof args['projectRoot'] === 'string' ? args['projectRoot'] : projectRoot;\n      const result = await runStart({ projectRoot: root });",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R2-005",
+      "R4-004"
+    ]
+  },
+  {
+    "cluster_id": "C003",
+    "title": "RegistryWarning kind is loosely typed as string — discriminator union is the natural shape",
+    "file": "mcp/server/src/registry.ts",
+    "line_ranges": [
+      "13-18",
+      "5-11",
+      "25-119"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      2
+    ],
+    "max_severity": "medium",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "design"
+    ],
+    "recommendations": [
+      "Replace the open shape with a tagged union, e.g. `type RegistryWarning = { kind: 'no-paths-dir'; message: string } | { kind: 'empty-paths-dir'; message: string } | { kind: 'missing-path-json'; message: string; dir: string } | { kind: 'malformed-path-json' | 'invalid-path-json'; message: string; path: string }`. Export the union from registry.ts so start.ts and skill renderers can re-export and exhaustive-check.",
+      "Either `export type PathInfo = PathData` (or just re-export PathData as PathInfo) and `paths.push(validation.value)` directly, or drop PathInfo and have scanRegistry return `{ paths: PathData[]; warnings: ... }`. The personalization_options narrowing from `PersonalizationOption[]` to `string[]` in PathInfo is also lossy — re-using PathData preserves the literal-union typing for downstream consumers.",
+      "Pick one. If the design wants async I/O (recommended for an MCP server), switch to `fs.promises.readdir`, `fs.promises.readFile`, `fs.promises.stat` — the existsSync check folds into a try/catch on stat or readFile. If sync is fine for cycle 1's tiny scan, drop `async` from the signature and return RegistryResult directly; let start.ts handle the lifting if it ever wants to parallelize."
+    ],
+    "descriptions": [
+      "RegistryWarning declares `kind: string` and an open optional grab-bag of `path?: string` and `dir?: string`. The contract enumerates a closed set of warning kinds: 'no-paths-dir', 'empty-paths-dir', 'missing-path-json', 'malformed-path-json', 'invalid-path-json' (plus the phases-related ones if R2-001 is fixed). A discriminated union (kind: 'no-paths-dir' | 'empty-paths-dir' | ...) with per-kind required fields would let TypeScript catch a typo like 'malformed-paths-json' (note the trailing 's') at compile time and would let callers (skill renderer, future tools) exhaustively switch on kind. Right now any consumer that wants to format a warning has to defensively check both `path` and `dir` because the type system never tells them which one is set.",
+      "registry.ts declares `PathInfo` with the exact same five fields as `PathData` in schemas/path.ts (slug, title, summary, personalization_options, build_command), then manually copies field-by-field in the closing `paths.push({ ... })`. This is shape duplication: any future field added to path.json must be added in three places (PathData, PathInfo, and the manual copy), and a typo in the copy block silently drops a field. The registry is the consumer of the schema's parsed value — that value should be the source of truth.",
+      "scanRegistry is declared `async` and returns `Promise<RegistryResult>`, but every fs operation inside is synchronous: readdirSync, existsSync, readFileSync. The async signature is purely cosmetic and misleads callers (e.g. start.ts awaits it as if I/O is overlapped with probeOutputStyle, but it isn't). Either the design wants async I/O (use fs.promises) or the function should be sync and the signature should reflect that. The current state is the awkward middle: API surface promises async semantics, implementation delivers blocking I/O."
+    ],
+    "impacts": [
+      "Encourages stringly-typed branching in downstream renderers (skills/course-engine, future tools) and silently allows the producer side to drift from the documented vocabulary. Hurts the 'engine extensibility without coupling' design goal: a new warning kind cannot be added in one place — the producer and every consumer pay the cost.",
+      "Naming/abstraction-layer leak: the schema layer's job is to parse-and-validate into a typed value; the registry layer's job is to aggregate and warn. Today registry.ts re-encodes the row shape, which couples it to path.json's field set. Adding a new path.json field in cycle 4 will require touching registry.ts even though no registry behavior changes.",
+      "Future cycles that assume the registry is non-blocking (e.g. running it concurrently with another probe in cycle 2) will be silently surprised — the event loop stalls during the directory walk. It's also a naming/contract leak: an async function that does no async work is a low-grade design smell that compounds when the surface grows."
+    ],
+    "evidence": "export async function scanRegistry(scanRoot: string): Promise<RegistryResult> {\n  let entries: fs.Dirent[];\n  try {\n    entries = fs.readdirSync(scanRoot, { withFileTypes: true });",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R2-002",
+      "R2-004",
+      "R2-007"
+    ]
+  },
+  {
+    "cluster_id": "C004",
+    "title": "existsSync precheck on path.json invites TOCTOU and EACCES misclassification",
+    "file": "mcp/server/src/registry.ts",
+    "line_ranges": [
+      "74-84",
+      "63-71",
+      "76-84"
+    ],
+    "agreement_count": 2,
+    "reviewers": [
+      3,
+      6
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "error-handling",
+      "security"
+    ],
+    "recommendations": [
+      "Use a distinct warning kind for read failures, e.g. 'unreadable-path-json', and reserve 'malformed-path-json' for JSON.parse failures only. Include err.code if available.",
+      "Drop the existsSync precheck. Call fs.readFileSync inside the try/catch and branch on err.code in the catch: ENOENT -> 'missing-path-json'; EACCES -> 'unreadable-path-json'; default -> generic with err.message. Single source of truth and no race window.",
+      "Either fs.lstat(pathJsonFile) and skip with a warning if isSymbolicLink() returns true, or fs.realpathSync and assert the resolved path starts with the canonicalized scanRoot. Given the trusted-dev-tool context this is genuinely low priority, but the check is a 5-line addition."
+    ],
+    "descriptions": [
+      "When fs.readFileSync(pathJsonFile, ...) throws (EACCES on the file, EISDIR if path.json is a directory, etc.), the warning emitted has kind 'malformed-path-json'. The same kind is used for genuine JSON.parse failures a few lines later. A reader cannot distinguish 'I cannot read your file' from 'your file is not valid JSON'.",
+      "fs.existsSync(pathJsonFile) is used to decide between emitting 'missing-path-json' and proceeding to readFileSync. existsSync returns false on EACCES (cannot stat the parent), so a permission-denied case reports as 'missing-path-json' even when the file is present. It also creates a TOCTOU window: the file may be deleted between existsSync and readFileSync, causing a different warning kind ('malformed-path-json' per the read-error path). The two warnings disagree on what is wrong.",
+      "scanRegistry uses fs.readFileSync(pathJsonFile, 'utf8') where pathJsonFile is path.join(scanRoot, entry.name, 'path.json'). Although entry.name is a basename (no '../' traversal possible from a Dirent), path.json itself can be a symbolic link pointing anywhere on disk, including ~/.ssh/id_rsa or /etc/passwd. fs.readFileSync follows symlinks. There is no fs.realpath or stat check confirming the resolved target stays within scanRoot."
+    ],
+    "impacts": [
+      "The user is told their JSON is malformed and goes to lint/reformat it, when the real issue is filesystem. Diagnostic friction; not a correctness bug because the path is correctly skipped either way.",
+      "Inconsistent diagnostics for the same underlying state, depending on race timing and permission setup. The cycle-1 surface is small enough that this is unlikely to bite, but it is a smell that compounds when registries grow.",
+      "An attacker who can write a single file inside any paths/<slug>/ dir (i.e. anyone with repo-write access — already trusted) could place a symlink at path.json. The ensuing JSON.parse would fail and surface a 'malformed-path-json' warning containing the absolute path of the offending file (not its contents), so direct exfiltration is bounded. The realistic risk is denial-of-service via a symlink to /dev/zero or a multi-GB file, since there is no size cap before readFileSync (see R6-002)."
+    ],
+    "evidence": "    try {\n      raw = fs.readFileSync(pathJsonFile, 'utf8');\n    } catch (err) {\n      warnings.push({\n        kind: 'malformed-path-json',\n        message: `Failed to read ${pathJsonFile}: ${err instanceof Error ? err.message : String(err)}`,\n        path: pathJsonFile,\n      });\n      continue;\n    }",
+    "confidence_spread": [
+      "high",
+      "medium"
+    ],
+    "source_ids": [
+      "R3-003",
+      "R3-004",
+      "R6-001"
+    ]
+  },
+  {
+    "cluster_id": "C007",
+    "title": "Unbounded readFileSync on path.json and settings.json enables OOM",
+    "file": "mcp/server/src/registry.ts",
+    "line_ranges": [
+      "63-84",
+      "76"
+    ],
+    "agreement_count": 2,
+    "reviewers": [
+      4,
+      6
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "simplicity",
+      "security"
+    ],
+    "recommendations": [
+      "Replace the existsSync gate with a single try/catch around readFileSync. Branch on err.code === 'ENOENT' for the missing-path-json case; everything else becomes malformed-path-json (read-error variant).",
+      "Before readFileSync, fs.statSync(file) and reject with a structured warning if size > some sane limit (e.g. 1 MiB for path.json, 256 KiB for settings.json). This is cheap defense-in-depth and forward-compatible with future untrusted-input flows."
+    ],
+    "descriptions": [
+      "For each candidate path dir, the code calls fs.existsSync(pathJsonFile) and then fs.readFileSync(pathJsonFile). The second call already throws ENOENT if the file is gone, so existsSync is redundant — and introduces a TOCTOU race that does nothing useful here but is a bad reflex pattern. The two distinct warning kinds ('missing-path-json' vs. 'malformed-path-json') can both be derived from the readFileSync catch by inspecting err.code === 'ENOENT'.",
+      "Both registry.ts (line 76) and outputStyle.ts (line 22) read attacker-influenceable JSON files with fs.readFileSync(file, 'utf8') and no maxFileSize / fs.statSync precheck. JSON.parse is then run on the entire string. A maliciously placed multi-gigabyte path.json or ~/.claude/settings.json (or a symlink to /dev/zero) would inflate Node's heap until the process is OOM-killed."
+    ],
+    "impacts": [
+      "Two stat() syscalls per path instead of one. More importantly, the reader has to verify that the second call's failure mode is reachable when existsSync succeeds (it is — permissions, race) and that the warning kinds remain distinct.",
+      "MCP server crash, no further course functionality until restart. Locally exploitable only by someone who can already write the relevant files (already trusted in a dev environment), so this is a robustness concern rather than an exploit primitive. Worth flagging because cycle 4+ may add untrusted-path import flows that inherit the same code path."
+    ],
+    "evidence": "if (!fs.existsSync(pathJsonFile)) {\n      warnings.push({\n        kind: 'missing-path-json',",
+    "confidence_spread": [
+      "high",
+      "medium"
+    ],
+    "source_ids": [
+      "R4-003",
+      "R6-002"
+    ]
+  },
+  {
+    "cluster_id": "C006",
+    "title": "RegistryWarning declares unused optional `dir` field",
+    "file": "mcp/server/src/registry.ts",
+    "line_ranges": [
+      "25-28",
+      "13-18"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      4
+    ],
+    "max_severity": "low",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "simplicity"
+    ],
+    "recommendations": [
+      "Either (a) drop `async` and let callers `await` a sync return (works fine — await on a non-Promise is a no-op), or (b) switch to `fs.promises.readdir/readFile/access` to match the async signature. Option (a) is the smaller diff.",
+      "Drop `dir?: string` from the interface. If a future cycle needs it, add it then."
+    ],
+    "descriptions": [
+      "scanRegistry is declared `async` and returns Promise<RegistryResult>, but its body uses fs.readdirSync, fs.existsSync, and fs.readFileSync exclusively — there is no await inside. The async wrapper exists to match runStart's await, but it adds a microtask round-trip and obscures that the function is pure-sync. Same pattern in probeOutputStyle (outputStyle.ts:17 — async with only readFileSync inside).",
+      "RegistryWarning has both `path?: string` and `dir?: string` optional fields. The implementation only ever sets `path` (lines 68, 81, 92, 104). `dir` is never written to. It's a speculative field — either reserved for a future iteration that isn't specified, or vestigial from an earlier draft."
+    ],
+    "impacts": [
+      "Misleading signature. Readers expect await points; finding none, they wonder what they missed. Trivial perf overhead from the unnecessary Promise wrapping.",
+      "Schema noise. Consumers of the warning shape can't tell whether `dir` is meaningful or dead. Tests that grep for warning shape may inadvertently match on a field the engine never produces."
+    ],
+    "evidence": "export async function scanRegistry(scanRoot: string): Promise<RegistryResult> {\n  let entries: fs.Dirent[];\n  try {\n    entries = fs.readdirSync(scanRoot, { withFileTypes: true });",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R4-002",
+      "R4-006"
+    ]
+  },
+  {
+    "cluster_id": "C008",
+    "title": "PathInfo and PathData are structurally identical, defined twice",
+    "file": "mcp/server/src/registry.ts",
+    "line_ranges": [
+      "5-11"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      4
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "simplicity"
+    ],
+    "recommendations": [
+      "Export PathData from schemas/path.ts as the single source of truth and have registry.ts re-export it as PathInfo (or just use PathData everywhere). Replace lines 109-115 with `paths.push(validation.value)`."
+    ],
+    "descriptions": [
+      "registry.ts defines `PathInfo` with five fields (slug, title, summary, personalization_options: string[], build_command). schemas/path.ts defines `PathData` with the same five fields (slug, title, summary, personalization_options: PersonalizationOption[], build_command). The only nominal difference is `string[]` vs the narrower `PersonalizationOption[]`, and PersonalizationOption is itself just a subset of string. registry.ts then also explicitly re-spreads validation.value field-by-field (lines 109-115) instead of `paths.push(validation.value)`."
+    ],
+    "impacts": [
+      "Duplicate type definition; readers must verify the two stay in sync. Future field additions need three edits (interface, interface, the explicit copy in scanRegistry)."
+    ],
+    "evidence": "export interface PathInfo {\n  slug: string;\n  title: string;\n  summary: string;\n  personalization_options: string[];\n  build_command: string;\n}",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R4-005"
+    ]
+  },
+  {
+    "cluster_id": "C011",
+    "title": "outputStyle silently accepts when enabledPlugins is an array",
+    "file": "mcp/server/src/outputStyle.ts",
+    "line_ranges": [
+      "46-57"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      1
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "correctness"
+    ],
+    "recommendations": [
+      "Tighten the guard: typeof === 'object' && !== null && !Array.isArray(...). If enabledPlugins exists but has the wrong shape, emit a 'settings-file-malformed' warning. T-017's silent-disable case (enabledPlugins entirely absent) stays unaffected."
+    ],
+    "descriptions": [
+      "The type guard checks typeof === 'object' && !== null but does not exclude arrays. enabledPlugins as an array (e.g. user wrote a list instead of a map) passes the guard; the subsequent index access enabledPlugins['learning-output-style@claude-plugins-official'] returns undefined; the function returns ok=false with no warning. The malformed-data case is silently equated with 'plugin disabled'."
+    ],
+    "impacts": [
+      "User who mis-edits settings.json into an array shape sees no diagnostic — the course just acts as if the output style is off. Compared to the JSON-parse-error case (which DOES warn), this is an inconsistent treatment of malformed-but-parseable settings. Not a critical defect, but the silent-disable semantics in A4/T-017 are intended for the 'key absent' scenario, not 'key present but wrong shape'."
+    ],
+    "evidence": "    typeof (parsed as Record<string, unknown>)['enabledPlugins'] !== 'object' ||\n    (parsed as Record<string, unknown>)['enabledPlugins'] === null",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R1-006"
+    ]
+  },
+  {
+    "cluster_id": "C012",
+    "title": "OutputStyleResult and RegistryWarning are two parallel warning shapes with no shared contract",
+    "file": "mcp/server/src/outputStyle.ts",
+    "line_ranges": [
+      "5-14"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      2
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "design"
+    ],
+    "recommendations": [
+      "Either unify to a shared `EngineWarning` (origin: 'registry' | 'output-style', kind, message, ...) and concatenate styleResult.warning into start.warnings, or rename to make the omission deliberate (e.g. document that outputStyleOk is the entire user-facing surface and remove the warning return from probeOutputStyle). The current state — produce-and-discard — is the worst of both worlds."
+    ],
+    "descriptions": [
+      "outputStyle.ts defines its own `OutputStyleWarning { kind, message }` and registry.ts defines `RegistryWarning { kind, message, path?, dir? }`. The skill renderer has to know about both shapes; today start.ts silently drops the outputStyle warning entirely (it only reads styleResult.ok and discards styleResult.warning). That dropped-warning data flow is invisible from the StartResult type. Either both should share a base 'EngineWarning' shape and merge into start.warnings, or the design should make the asymmetry explicit (e.g. a separate top-level outputStyleWarning slot in StartResult)."
+    ],
+    "impacts": [
+      "(1) The user never sees 'settings-file-malformed' surfaced through the skill — diagnostic value is lost. (2) Two parallel warning vocabularies inside one engine fragments naming and makes it harder for future tools to produce uniform diagnostic UX. (3) The discarded warning is an information-loss design smell: the function returns it but the only caller throws it away."
+    ],
+    "evidence": "const styleResult = await probeOutputStyle();\n  const pathsRoot = path.join(projectRoot, 'paths');\n  const registry = await scanRegistry(pathsRoot);\n\n  return {\n    outputStyleOk: styleResult.ok,",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R2-003"
+    ]
+  },
+  {
+    "cluster_id": "C013",
+    "title": "probeOutputStyle silently returns ok=false when settings shape is wrong",
+    "file": "mcp/server/src/outputStyle.ts",
+    "line_ranges": [
+      "46-54"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      3
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "error-handling"
+    ],
+    "recommendations": [
+      "Distinguish the absent-enabledPlugins case (no warning, intentional silent-disable per contract) from the wrong-shape case ('settings-file-malformed' or a new 'settings-shape-invalid' warning). Document which shapes are intentional silent-disable and which are diagnostic."
+    ],
+    "descriptions": [
+      "If settings.json parses but the top level is a non-object (array, string, number) or enabledPlugins is the wrong type (string, array, null), the probe returns { ok: false } with NO warning. T-017 requires this for the 'enabledPlugins absent' case, but the same code path also masks structurally-broken settings files. A user who accidentally writes `enabledPlugins: \"true\"` (string) gets no diagnostic — start just reports outputStyleOk=false."
+    ],
+    "impacts": [
+      "Silent-disable for misconfigured settings looks identical to silent-disable for an absent key. The user has no breadcrumb. Low because the field is advisory in cycle 1; the asymmetry becomes louder in later cycles."
+    ],
+    "evidence": "  if (\n    typeof parsed !== 'object' ||\n    parsed === null ||\n    !('enabledPlugins' in parsed) ||\n    typeof (parsed as Record<string, unknown>)['enabledPlugins'] !== 'object' ||\n    (parsed as Record<string, unknown>)['enabledPlugins'] === null\n  ) {\n    return { ok: false };\n  }",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R3-005"
+    ]
+  },
+  {
+    "cluster_id": "C016",
+    "title": "validatePath silently allows duplicate personalization_options entries",
+    "file": "mcp/server/src/schemas/path.ts",
+    "line_ranges": [
+      "29-37",
+      "38-48"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      1
+    ],
+    "max_severity": "low",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "correctness"
+    ],
+    "recommendations": [
+      "Apply the same 'typeof X === string && X.length > 0' check to title, summary, and build_command for parity with the slug check. Update the corresponding error messages to identify the empty-string case distinctly from a missing field.",
+      "After the enum check, assert new Set(opts).size === opts.length; if not, return ok=false with an error naming the duplicate. Cheap, deterministic, and prevents content-authoring bugs from sneaking through."
+    ],
+    "descriptions": [
+      "Slug is checked for both type AND non-empty length (line 26). Title, summary, and build_command are checked only for type 'string' — an empty string slips through as valid. T-019 asserts orderbook.title.length > 0 from the real path.json fixture (which has a non-empty title), so the gap is invisible to the test suite but a malformed authored path could surface a PathInfo with title === ''.",
+      "personalization_options is validated element-by-element against the enum, but no check rejects ['poll_interval_ms','poll_interval_ms']. The downstream personalization layer (cycle 3+) presumably treats the option as a flag; duplicates are harmless but indicate the authored path.json is malformed in a way the schema does not flag."
+    ],
+    "impacts": [
+      "Consumer rendering ('Available Paths: <title> — <summary>') would print blanks. The skill's UX assumes non-empty fields. Contract A5/A7 imply schema rejection for malformed path.json; whether 'title: \"\"' counts as malformed is ambiguous, but the slug treatment establishes a precedent of 'string + non-empty' for required text fields.",
+      "No runtime breakage in cycle 1; future personalization renderer may or may not be idempotent under duplicates. Surfacing this now is cheap; surfacing it later may require schema migration."
+    ],
+    "evidence": "  for (const opt of obj['personalization_options'] as unknown[]) {\n    if (typeof opt !== 'string' || !VALID_PERSONALIZATION_OPTIONS.has(opt)) {",
+    "confidence_spread": [
+      "high",
+      "medium"
+    ],
+    "source_ids": [
+      "R1-005",
+      "R1-008"
+    ]
+  },
+  {
+    "cluster_id": "C020",
+    "title": "index.ts inlines tool registration; no registerTools() seam for harness or future cycles",
+    "file": "mcp/server/src/index.ts",
+    "line_ranges": [
+      "6-32"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      2
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "design"
+    ],
+    "recommendations": [
+      "Split: `tools/registerAll.ts` (or keep inline in index but as an exported function) takes the McpServer and wires up tools; `index.ts` becomes the bin script that constructs the server, calls registerAll, and connects stdio. The harness can then import registerAll and a different transport."
+    ],
+    "descriptions": [
+      "index.ts constructs the McpServer and registers the start tool inline at module top-level, then connects the stdio transport at top-level await. There is no exported function to register tools onto a caller-supplied server. Cycle 2 will add runPreflightProbe; that will mean appending another `server.tool(...)` block here, and the harness still cannot share the registration code (see R2-005). A small refactor — `export function registerTools(server: McpServer) { ... }` invoked from a `main()` that owns the stdio bootstrap — would isolate composition from transport and let the harness mount the same registrations on an in-memory transport."
+    ],
+    "impacts": [
+      "Mild but real: every new tool requires editing the same monolithic file, and the harness/in-process scenarios must duplicate registration logic. It also makes index.ts a side-effect module (import-for-effect), which complicates testing of the server bootstrap itself."
+    ],
+    "evidence": "server.tool(\n  'start',\n  'Start the Sui DeepBook course — returns paths, output style status, and preflight info.',\n  {\n    projectRoot: z.string().describe('Absolute path to the project root'),\n  },",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R2-006"
+    ]
+  },
+  {
+    "cluster_id": "C021",
+    "title": "MCP server top-level await crashes process on transport failure",
+    "file": "mcp/server/src/index.ts",
+    "line_ranges": [
+      "30-31"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      3
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "error-handling"
+    ],
+    "recommendations": [
+      "Wrap the connect call in try/catch and log a single-line structured message before re-throwing or exit(1). Wrap the body of the start tool handler in try/catch so unexpected errors return a structured failure result instead of bubbling."
+    ],
+    "descriptions": [
+      "`await server.connect(transport)` is the last line of the module. If the stdio transport fails (closed stdin, parent died, EPIPE), the unhandled rejection terminates the Node process with a stack trace rather than a clean error message. There is also no try/catch around runStart inside the tool handler — a thrown error would bubble back to the MCP layer as a generic protocol error rather than as a structured tool result."
+    ],
+    "impacts": [
+      "Operationally low because Claude Code generally manages the server lifecycle, but a torn-down parent will produce a noisy stack trace in logs and the user sees no useful diagnostic. The runStart wrap is a safety net for future cycles when registry/probe code grows."
+    ],
+    "evidence": "const transport = new StdioServerTransport();\nawait server.connect(transport);",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R3-006"
+    ]
+  },
+  {
+    "cluster_id": "C022",
+    "title": "start.ts owns the 'paths' subdirectory naming convention — leaks content layout into tool layer",
+    "file": "mcp/server/src/tools/start.ts",
+    "line_ranges": [
+      "14-26",
+      "6-22"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      2
+    ],
+    "max_severity": "low",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "design"
+    ],
+    "recommendations": [
+      "Move the 'paths' join into registry.ts: scanRegistry takes `projectRoot` and computes its own `paths/` subdirectory, OR export a small helper `resolvePathsRoot(projectRoot): string` from registry.ts and have callers use it. Either way, the convention lives in one place.",
+      "Optional: extract the preflight sentinel to a named constant. Skip if you'd rather keep the inline literal — this is genuinely info-level."
+    ],
+    "descriptions": [
+      "runStart constructs `path.join(projectRoot, 'paths')` and passes it to scanRegistry. The 'paths' directory name — the convention that content lives under <projectRoot>/paths/<slug>/ — is a registry-layer concern, not a start-tool concern. If a future cycle wants to support a workspace with a configurable content root (e.g. an env override, or a multi-root repo), the change would have to be made in start.ts, not in registry.ts where the rest of the layout knowledge lives. The schema/registry boundary is otherwise clean; this one line breaks it.",
+      "The literal string 'cycle-1' appears as the preflight.reason. The StartResult interface narrows it to the literal type 'cycle-1', which is the right move. But this sentinel is intentionally going to be replaced in cycle 2, and cycle 2's reviewer will need to find every place this changes. A single exported constant (e.g. `export const PREFLIGHT_SKIPPED_CYCLE_1 = { skipped: true, reason: 'cycle-1' as const }`) would make the sentinel discoverable by name and centralize the cycle-bump."
+    ],
+    "impacts": [
+      "Mild. It's one line, but it's the kind of accidental coupling that makes the engine harder to reason about: 'where does the engine decide where content lives?' has two answers (start.ts joins 'paths', registry.ts walks it). If cycle 2 adds runPreflightProbe and that probe also needs to know the content root, the join will be duplicated.",
+      "None today. A trivial maintenance smoothing for cycle 2."
+    ],
+    "evidence": "const pathsRoot = path.join(projectRoot, 'paths');\n  const registry = await scanRegistry(pathsRoot);",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R2-008",
+      "R2-010"
+    ]
+  },
+  {
+    "cluster_id": "C025",
+    "title": "zod declared as dep but schemas are hand-rolled — worst of both worlds",
+    "file": "mcp/server/package.json",
+    "line_ranges": [
+      "16-19"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      4
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "simplicity"
+    ],
+    "recommendations": [
+      "Pick one path. Either (a) rewrite path.ts/phases.ts using z.object/z.array (the schemas are trivially expressible), or (b) drop the zod dep and replace z.string() in index.ts with an inline `typeof projectRoot === 'string'` guard."
+    ],
+    "descriptions": [
+      "package.json declares 'zod: ^3.22.0' as a runtime dependency, yet schemas/path.ts and schemas/phases.ts hand-roll ~120 lines of validation. The only zod consumer is src/index.ts:14 which uses z.string() for a single MCP tool input parameter. The contract permits hand-rolled OR zod; choosing both pays the dep cost without the simplicity payoff. A 4-field path schema and a 3-level phases schema in zod would be ~10 lines each vs. the current 60 + 65."
+    ],
+    "impacts": [
+      "Extra dep in the install graph; reviewer/maintainer must context-switch between two validation idioms. If zod is kept, schemas should use it; if hand-rolled is the choice, drop zod and inline a 3-line type-guard for projectRoot."
+    ],
+    "evidence": "\"zod\": \"^3.22.0\"",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R4-001"
+    ]
+  },
+  {
+    "cluster_id": "C026",
+    "title": "T-018 zero-write spies miss fs.createWriteStream and fs.open(write-flag)",
+    "file": "tests/start.tool.test.ts",
+    "line_ranges": [
+      "263-319"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      5
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "Add spies on fs.createWriteStream, fs.open, fs.openSync, fs.copyFile, fs.copyFileSync, and fsPromises.open/copyFile, asserting zero calls (or filtering to write-flag invocations)."
+    ],
+    "descriptions": [
+      "The AC-1.3 invariant test spies on writeFile/writeFileSync/appendFile/appendFileSync/mkdir/mkdirSync/rename/renameSync/truncate/truncateSync/unlink/unlinkSync (sync, callback, and promises). It does NOT spy on fs.createWriteStream, fs.open/fs.openSync (with 'w'/'a'/'w+'/'a+' flags), fs.writev/writevSync, fs.fdatasync, or fs.copyFile/copyFileSync. An implementer who introduces a debug-trail via createWriteStream or fs.openSync(path,'w') + fs.writeSync(fd,...) would slip past the spies. The recursive snapshot inside tempProjectRoot would still catch writes that land there, but writes routed elsewhere (e.g. to /tmp, ~/.cache, or the cwd) would go undetected."
+    ],
+    "impacts": [
+      "An implementer determined to log via stream-style writes can violate AC-1.3 silently. Probability is low because the obvious APIs are covered, but the contract calls AC-1.3 'load-bearing' — the test should be airtight."
+    ],
+    "evidence": "const writeFileSyncSpy = vi.spyOn(fs, 'writeFileSync');",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R5-002"
+    ]
+  },
+  {
+    "cluster_id": "C027",
+    "title": "T-027 grep scope skips dist/, package.json, agents/, hooks/, root — implementer can hide the slug there",
+    "file": "tests/registry.test.ts",
+    "line_ranges": [
+      "287-327"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      5
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "Expand SCAN_ROOTS to include mcp/server/package.json, mcp/server/tsconfig.json, .claude-plugin/, agents/, hooks/, and repo-root .ts/.md/.json files. Either (a) walk the entire repo and exclude only paths/, tests/, node_modules/, and .forge/, or (b) explicitly list every directory the contract considers 'engine code'. Also remove the silent-return-on-missing-dir to fail loudly instead."
+    ],
+    "descriptions": [
+      "T-027 walks only mcp/server/src, commands, skills/course-engine, scripts/e2e. It does NOT walk mcp/server/package.json, mcp/server/dist/, agents/, hooks/, .claude-plugin/, or repo-root .ts/.md/.json files. The contract A10 says 'Engine code (everything outside paths/) contains zero string literals matching 01-orderbook-viewer'. An implementer could embed the slug literal in mcp/server/package.json, mcp/server/dist/index.js (a build artifact present after pnpm build), or .claude-plugin/plugin.json without failing T-027. Note also that the walk silently returns on missing dirs ('try/catch return — vacuous pass'), so deleting an entire scan root would also pass."
+    ],
+    "impacts": [
+      "A10's parametricity proof is not fully enforced. An implementation could hardcode the slug in build artifacts or manifest files and still pass green, undermining the cycle-1 'zero hardcoded path knowledge' guarantee."
+    ],
+    "evidence": "const SCAN_ROOTS = [\n      path.join(REPO_ROOT, 'mcp', 'server', 'src'),\n      path.join(REPO_ROOT, 'commands'),\n      path.join(REPO_ROOT, 'skills', 'course-engine'),\n      path.join(REPO_ROOT, 'scripts', 'e2e'),\n    ];",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R5-003"
+    ]
+  },
+  {
+    "cluster_id": "C028",
+    "title": "T-001 'expect(typeof parsed.commands).toBeDefined()' is a tautology — typeof always returns a string",
+    "file": "tests/registry.test.ts",
+    "line_ranges": [
+      "96-118",
+      "88-93",
+      "122-133"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      5
+    ],
+    "max_severity": "low",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "Tighten T-002 to require entry.command to be a non-empty string and entry.args (if present) to be an array, and to require the command/args[0] string itself to include 'mcp/server/dist/index.js' or 'mcp/server/src/index.ts' (not the entry stringified). Better: actually spawn the command with --version or similar and assert exit 0 in an integration test.",
+      "Replace `expect(typeof parsed.commands).toBeDefined();` with `expect(parsed.commands).toBeDefined();` (or delete it; the next line covers the intent).",
+      "Strengthen T-019 by also asserting that `result.paths.find(...).title` deep-equals the title read from `paths/01-orderbook-viewer/path.json` and same for summary. That couples the test to file content rather than to a fixed prefix, removing the dependency on T-027 for parametricity."
+    ],
+    "descriptions": [
+      "T-002 stringifies each mcpServers entry and accepts a match if the string contains 'mcp/server/dist/index.js' OR 'mcp/server/src/index.ts' OR the bare substring 'mcp/server'. Any field — including a description, comment-style key, env var, or unrelated path — that incidentally contains 'mcp/server' satisfies the assertion. An entry like `{ description: 'wraps mcp/server build' }` with no actual command/args would pass. The test does not require that the matching string appear in command/args, nor that command point to a runnable file, nor that args is an array.",
+      "Line 88 reads `expect(typeof parsed.commands).toBeDefined();`. `typeof` always returns one of seven well-known strings, never undefined; this assertion is a no-op. The follow-up `expect(parsed.commands).not.toBeUndefined();` is the real check, so the redundant line is harmless but misleading. Same shape would not slip past the assertions for agents/skills/hooks (those use `not.toBeUndefined()` directly).",
+      "T-019 scans the real `paths/` and asserts the response contains an entry with slug exactly '01-orderbook-viewer', plus title/summary as non-empty strings. A naive implementation that always returned `[{ slug: '01-orderbook-viewer', title: 'x', summary: 'y', ... }]` would pass T-019 in isolation. T-027 (engine-source grep for the slug literal) is what makes T-019 non-tautological — together they enforce parametricity. The pairing works, but the comment in T-019 should call out the dependency on T-027, otherwise removing T-027 in a future cycle would silently break the parametricity proof."
+    ],
+    "impacts": [
+      "A1's claim that 'mcpServers entry references the built MCP server entrypoint' is only weakly enforced. A malformed manifest with a server entry that does not actually launch the server could pass green.",
+      "Minor — the redundant assertion gives a false sense of coverage but the next line catches the case it was meant to.",
+      "No functional gap today; this is a documentation/maintenance hazard. If T-027 is deleted or weakened later, T-019 alone won't catch a regression to a hardcoded registry."
+    ],
+    "evidence": "if (\n        haystack.includes('mcp/server/dist/index.js') ||\n        haystack.includes('mcp/server/src/index.ts') ||\n        haystack.includes('mcp/server')\n      ) {",
+    "confidence_spread": [
+      "high",
+      "medium"
+    ],
+    "source_ids": [
+      "R5-005",
+      "R5-006",
+      "R5-008"
+    ]
+  },
+  {
+    "cluster_id": "C030",
+    "title": "T-031 readFile spy list misses createReadStream / open(read-flag), narrowing positive-path proof",
+    "file": "tests/outputStyle.test.ts",
+    "line_ranges": [
+      "119-138",
+      "140-192"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      5
+    ],
+    "max_severity": "low",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "Walk every .ts file under mcp/server/src/ (or just outputStyle.ts plus any file imported transitively) and apply the same grep. Alternatively, in T-031 also spy on child_process.spawn{Sync}/exec{Sync} and assert zero calls; spy on Object.getOwnPropertyDescriptor of process.env to detect any CLAUDE_* read.",
+      "Also spy on fs.createReadStream, fs.openSync, fs.open, and fsPromises.open; assert all observed paths resolve to settings.json (or zero calls)."
+    ],
+    "descriptions": [
+      "T-029 and T-030 read only mcp/server/src/outputStyle.ts and grep for CLAUDE_OUTPUT_STYLE / process.env.CLAUDE / process.ppid / parent_process / /proc/ / systemPrompt / system_prompt / getppid. An implementer could move the forbidden probe into a helper file (e.g. mcp/server/src/_outputStyle_internal.ts) and import it from outputStyle.ts. The static guard would pass while the security invariant A13 was violated. T-031 (the runtime spy) covers the read-path positive case but only spies on fs.readFile{Sync} and fsPromises.readFile — it would not catch a child_process.spawn or process.env access.",
+      "T-031 spies on fs.readFileSync, fs.readFile, and fsPromises.readFile, then asserts every observed read path resolves to <home>/.claude/settings.json. It does not spy on fs.createReadStream, fs.open{Sync}, fsPromises.open, or fs.readv. An implementer using e.g. `const fd = fs.openSync(somePath, 'r'); fs.readSync(fd, ...)` to read a different file would not be caught. Also, `expect(observedPaths.length).toBeGreaterThan(0)` ensures at least one read happened, but does not enforce exactly one — a probe that read settings.json AND another path via the spied APIs would fail the per-path assertion (good), but a probe that read another path via createReadStream and settings.json via readFileSync would still pass."
+    ],
+    "impacts": [
+      "The static guard for A13 is shallow. A motivated implementer could bypass it by indirection. A13 is flagged in the contract as a 'critical finding' for the security reviewer.",
+      "The 'only reads from settings.json' invariant is enforced for the common APIs but not exhaustively. Combined with the static grep tests T-029/T-030, the practical attack surface is narrow, but this is a hole."
+    ],
+    "evidence": "const syncSpy = vi\n        .spyOn(fs, 'readFileSync')\n        .mockImplementation(",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R5-004",
+      "R5-009"
+    ]
+  },
+  {
+    "cluster_id": "C005",
+    "title": "Symlinked path directories are silently dropped",
+    "file": "mcp/server/src/registry.ts",
+    "line_ranges": [
+      "42-42"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      3
+    ],
+    "max_severity": "info",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "error-handling"
+    ],
+    "recommendations": [
+      "Either follow symlinks (use fs.statSync(slugDir).isDirectory() or readdirSync with { withFileTypes: true } and treat e.isSymbolicLink() as a candidate, then stat-resolve), or emit a low-severity warning when a symlink is encountered so authors know it was skipped."
+    ],
+    "descriptions": [
+      "dirEntries filters with `e.isDirectory()`, which returns false for a symlink that points to a directory (Dirent.isDirectory() reports the link's own type, not the target). A developer who symlinks paths/04-fake-path -> /tmp/work/fake-path during local iteration gets no entry and no warning — the path silently disappears."
+    ],
+    "impacts": [
+      "Niche but plausible during course authoring. The omission is silent (no warning), violating the spirit of the contract's 'malformed paths are skipped with a structured warning'."
+    ],
+    "evidence": "  const dirEntries = entries.filter((e) => e.isDirectory());",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R3-008"
+    ]
+  },
+  {
+    "cluster_id": "C009",
+    "title": "Field-by-field copy where `paths.push(validation.value)` would suffice",
+    "file": "mcp/server/src/registry.ts",
+    "line_ranges": [
+      "109-115"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      4
+    ],
+    "max_severity": "info",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "simplicity"
+    ],
+    "recommendations": [
+      "Replace lines 109-115 with `paths.push(validation.value);`. Combine with R4-005 by unifying PathData and PathInfo."
+    ],
+    "descriptions": [
+      "validatePath returns `value: PathData` with exactly the five fields PathInfo needs. The code then re-constructs the object field-by-field. Since PathData and PathInfo are structurally identical (R4-005), this could be `paths.push(validation.value)` — one line instead of seven. The current form invites bugs when fields are added (you must remember to extend the copy block)."
+    ],
+    "impacts": [
+      "Seven lines instead of one. Adds a maintenance footgun: a field added to PathData/PathInfo without updating this block silently drops it from the registry output."
+    ],
+    "evidence": "    paths.push({\n      slug: validation.value.slug,\n      title: validation.value.title,\n      summary: validation.value.summary,\n      personalization_options: validation.value.personalization_options,\n      build_command: validation.value.build_command,\n    });",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R4-008"
+    ]
+  },
+  {
+    "cluster_id": "C014",
+    "title": "Triple cast to Record<string, unknown> for the same parsed value",
+    "file": "mcp/server/src/outputStyle.ts",
+    "line_ranges": [
+      "46-56"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      4
+    ],
+    "max_severity": "info",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "simplicity"
+    ],
+    "recommendations": [
+      "After the null/object guard, do `const parsedObj = parsed as Record<string, unknown>;` then reference `parsedObj.enabledPlugins` once. Or use `'enabledPlugins' in parsed` followed by direct property access on the narrowed type."
+    ],
+    "descriptions": [
+      "After narrowing `parsed` to a non-null object, the code casts it to Record<string, unknown> three separate times in the same expression chain (line 50, line 51, line 56). Each cast is `(parsed as Record<string, unknown>)['enabledPlugins']`. A single intermediate const would eliminate two of the three casts and read more naturally."
+    ],
+    "impacts": [
+      "Minor readability. The `as` casts also signal to a reader that type narrowing isn't being trusted, when in fact the `typeof parsed !== 'object' || parsed === null` guard above already rules out non-records."
+    ],
+    "evidence": "!('enabledPlugins' in parsed) ||\n    typeof (parsed as Record<string, unknown>)['enabledPlugins'] !== 'object' ||\n    (parsed as Record<string, unknown>)['enabledPlugins'] === null",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R4-007"
+    ]
+  },
+  {
+    "cluster_id": "C015",
+    "title": "outputStyle warning leaks absolute homedir path back to MCP caller",
+    "file": "mcp/server/src/outputStyle.ts",
+    "line_ranges": [
+      "23-44",
+      "1-64"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      6
+    ],
+    "max_severity": "info",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "security"
+    ],
+    "recommendations": [
+      "Optional: replace the absolute path in the user-facing message with a relative or symbolic form ('~/.claude/settings.json') and keep the absolute path in a separate debug-only field. No action required for cycle 1.",
+      "None — record the verification result so the consolidator can mark A13/A14 as satisfied without re-deriving it."
+    ],
+    "descriptions": [
+      "Both error branches of probeOutputStyle embed the resolved settingsPath (which contains os.homedir(), e.g. /Users/alilloig/.claude/settings.json) in the warning.message field. That message is JSON-stringified into the start tool response and rendered into the Claude transcript by the course-engine skill.",
+      "Affirmative finding for the consolidator: outputStyle.ts contains zero references to CLAUDE_OUTPUT_STYLE, process.env (any key), process.ppid, /proc/, systemPrompt, system_prompt, getppid, or parent-process inspection. The single filesystem read is path.join(os.homedir(), '.claude', 'settings.json'). start.ts contains no 'shell' literal, no child_process import, and no dynamic kind construction; the returned shape is statically { outputStyleOk, preflight, paths, state, warnings }. plugin.json's mcpServers entry is { command: 'node', args: ['mcp/server/dist/index.js'], env: {} } — no shell wrapper, no env injection vector, no user-controlled string interpolated into the launch command."
+    ],
+    "impacts": [
+      "On local single-user systems this is non-information — the user already knows their own homedir. On shared/CI machines, or when a transcript is shared publicly (gist, screenshot, bug report), the absolute homedir reveals the OS account name. Not an A13 violation (A13 is about *reading from* the wrong place; this is about *what we echo back*). Cycle 1 contract does not constrain warning verbosity, so this is informational only.",
+      "A13 and A14 hold for the cycle 1 deliverable. No critical or high security findings."
+    ],
+    "evidence": "const settingsPath = path.join(os.homedir(), '.claude', 'settings.json');",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R6-003",
+      "R6-005"
+    ]
+  },
+  {
+    "cluster_id": "C017",
+    "title": "Schema validators fail-fast; user fixes one error at a time",
+    "file": "mcp/server/src/schemas/path.ts",
+    "line_ranges": [
+      "20-48"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      3
+    ],
+    "max_severity": "info",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "error-handling"
+    ],
+    "recommendations": [
+      "Optional cycle-2+ enhancement: collect all errors into an array before returning. Switch the validation result type to { ok: false; errors: string[] }. Not required for cycle 1."
+    ],
+    "descriptions": [
+      "validatePath returns on the first error encountered. A path.json missing both `slug` and `title` reports only 'Missing required field: slug'; the user fixes that, runs again, then hears about title; etc. validatePhases (schemas/phases.ts) has the same pattern. The contract does not require aggregated errors for cycle 1, so this is conformant — but the contract test T-035 only checks the single missing-slug case, which is exactly the behaviour that ships."
+    ],
+    "impacts": [
+      "Author UX during course development: each malformed path.json takes N round-trips to diagnose where a single round-trip with all errors would suffice. Not a runtime-correctness issue."
+    ],
+    "evidence": "  if (typeof obj['slug'] !== 'string' || obj['slug'].length === 0) {\n    return { ok: false, error: 'Missing required field: slug' };\n  }\n  if (typeof obj['title'] !== 'string') {\n    return { ok: false, error: 'Missing required field: title' };\n  }",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R3-007"
+    ]
+  },
+  {
+    "cluster_id": "C019",
+    "title": "Harness boot-time projectRoot vs. per-call projectRoot is unused flexibility",
+    "file": "scripts/e2e/harness.ts",
+    "line_ranges": [
+      "13-19"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      4
+    ],
+    "max_severity": "info",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "simplicity"
+    ],
+    "recommendations": [
+      "Either pass projectRoot only at call time, or only at boot. Pick one. Given the harness is meant to model in-process server invocation, boot-time is fine; drop the per-call override."
+    ],
+    "descriptions": [
+      "bootHarness takes a `projectRoot` in BootOptions, then the inner callTool checks `args['projectRoot']` and falls back to the boot-time value. The contract A12 and T-028 only require a single fixture root. No test or caller passes a different projectRoot per call. This is speculative parameterization — two ways to specify the same input."
+    ],
+    "impacts": [
+      "Reader has to reason about which projectRoot wins. Cycle 1 needs neither — just take projectRoot at call time and skip the boot-options indirection."
+    ],
+    "evidence": "const root = typeof args['projectRoot'] === 'string' ? args['projectRoot'] : projectRoot;",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R4-009"
+    ]
+  },
+  {
+    "cluster_id": "C023",
+    "title": "runStart accepts arbitrary projectRoot without absolute-path enforcement",
+    "file": "mcp/server/src/tools/start.ts",
+    "line_ranges": [
+      "14-17"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      6
+    ],
+    "max_severity": "info",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "security"
+    ],
+    "recommendations": [
+      "Add z.string().refine((p) => path.isAbsolute(p), { message: 'projectRoot must be absolute' }) to the start tool schema. Cheap, non-breaking, and prevents an entire class of CWD-confusion bugs in future cycles."
+    ],
+    "descriptions": [
+      "The tool's zod schema declares projectRoot as z.string() with the description 'Absolute path to the project root', but neither the schema nor runStart enforces path.isAbsolute(projectRoot). A relative projectRoot like '../../../etc' would be path.join'd with 'paths' and resolved against the MCP server's CWD at the time of invocation, potentially scanning a directory outside the intended project. The blast radius is bounded — scanRegistry only reads path.json files inside the chosen root and emits warnings, so the worst case is a confused-deputy disclosure of any path.json files reachable from the resolved location."
+    ],
+    "impacts": [
+      "Negligible in cycle 1 — the only caller is the course-engine skill, which passes the actual project root. Becomes load-bearing in later cycles if more tools are added that act on projectRoot (e.g. preflight shell actions in cycle 2+ per A14's wording)."
+    ],
+    "evidence": "projectRoot: z.string().describe('Absolute path to the project root'),",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R6-004"
+    ]
+  },
+  {
+    "cluster_id": "C024",
+    "title": "description.md in path content is unreferenced by engine — content/engine boundary slightly underspecified",
+    "file": "paths/01-orderbook-viewer/description.md",
+    "line_ranges": [
+      "1-29"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      2
+    ],
+    "max_severity": "info",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "design"
+    ],
+    "recommendations": [
+      "Either (a) add a 'missing-description-md' warning to the registry now (cheap, future-proofs the surface) or (b) add a one-liner comment in registry.ts noting that description.md is intentionally not validated at the engine layer. Defer the choice to whichever cycle first reads the file."
+    ],
+    "descriptions": [
+      "The contract lists description.md as a per-path file ('short student-facing intro ≤ 200 words'), and the file exists, but no engine code reads it. The registry only validates path.json; PathInfo carries `summary` (short blurb) but not description body. This is fine for cycle 1 — description.md is presumably consumed by a future cycle's lesson-render path — but right now description.md is content with no contract: nothing validates that it exists, nothing surfaces a warning if it's missing, and a path with a deleted description.md still reports as healthy. Worth flagging so the next cycle either folds it into the registry warning surface or explicitly designates it as best-effort prose."
+    ],
+    "impacts": [
+      "No impact today. A potential design drift if cycle 4 quietly starts reading description.md without a corresponding registry-level contract — at that point a missing file becomes a runtime surprise rather than a structured warning."
+    ],
+    "evidence": "# Orderbook Viewer\n\nIn this path you will build a real-time orderbook viewer for DeepBook v3",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R2-009"
+    ]
+  },
+  {
+    "cluster_id": "C029",
+    "title": "T-038 phases-zero-spots error matcher accepts mention of phase id alone, not the spots concept",
+    "file": "tests/registry.test.ts",
+    "line_ranges": [
+      "393-405"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      5
+    ],
+    "max_severity": "info",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "Drop 'p1' from the regex; require the error message to mention 'spot' or 'empty' specifically."
+    ],
+    "descriptions": [
+      "T-038 asserts `errMessage.toLowerCase().toMatch(/spot|empty|p1/)`. The phase id 'p1' is in the matcher alternation, so an error like 'Phase p1: id is required' (which doesn't mention spots/empty at all) would pass. The test is named 'rejects phases.json with a phase that has zero spots' but does not actually require the error to identify the empty-spots situation."
+    ],
+    "impacts": [
+      "An implementer could ship a phases validator whose error messages don't mention the actual failure mode, and the test would still pass. Low impact since the validator returns ok=false correctly."
+    ],
+    "evidence": "expect(errMessage.toLowerCase()).toMatch(/spot|empty|p1/);",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R5-007"
+    ]
+  }
+]

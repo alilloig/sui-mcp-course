@@ -1,0 +1,7 @@
+{
+  "slug": "01-orderbook-viewer",
+  "title": "Orderbook Viewer",
+  "summary": "Build a real-time DeepBook orderbook viewer using the Sui TypeScript SDK and the DeepBook v3 indexer.",
+  "personalization_options": ["poll_interval_ms", "pool_subset"],
+  "build_command": "pnpm build"
+}

@@ -1,0 +1,461 @@
+[
+  {
+    "id": "T-044",
+    "name": "loadState on absent .sui-deepbook-course/ returns kind=absent",
+    "behavior": "loadState(projectRoot) on a project root with no .sui-deepbook-course/ directory returns { kind: 'absent' } and the returned object carries no archivedTo, foundVersion, or state fields.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A2"
+  },
+  {
+    "id": "T-045",
+    "name": "loadState on absent dir creates zero filesystem entries (no mkdir)",
+    "behavior": "loadState(projectRoot) on a project root with no .sui-deepbook-course/ directory invokes neither fs.mkdir, fs.mkdirSync, fs.promises.mkdir, fs.writeFile, fs.writeFileSync, fs.promises.writeFile, fs.openSync (write flag), fs.rename, nor fs.renameSync. Recursive snapshot of projectRoot before vs after the call is byte-and-mtime equal.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A2"
+  },
+  {
+    "id": "T-046",
+    "name": "loadState on absent state.json (dir present) returns kind=absent",
+    "behavior": "loadState(projectRoot) when .sui-deepbook-course/ exists but state.json does not (ENOENT on the file, not the dir) returns { kind: 'absent' } and creates no further entries.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A6"
+  },
+  {
+    "id": "T-047",
+    "name": "loadState on JSON-valid state.json with current schema_version returns kind=ok and round-trips fields",
+    "behavior": "Given a state.json whose schema_version equals STATE_SCHEMA_VERSION (initial value 1) and whose top-level shape passes the validator, loadState returns { kind: 'ok', state } where state.selected_path, state.personalization, state.cursor.phase_id, state.cursor.spot_id, state.ladder, and state.history deep-equal the bytes on disk.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A3"
+  },
+  {
+    "id": "T-048",
+    "name": "loadState on non-JSON bytes archives original bytes byte-for-byte and returns kind=corrupt",
+    "behavior": "Given a state.json containing the bytes from tests/fixtures/state/corrupt.json (truncated/non-JSON), loadState archives the original bytes verbatim to .sui-deepbook-course/state.corrupt-<ISO-timestamp>.json (read back equals original bytes), returns { kind: 'corrupt', archivedTo, message }, and archivedTo is an absolute path that exists on disk.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A4"
+  },
+  {
+    "id": "T-049",
+    "name": "loadState on corruption leaves canonical state.json untouched",
+    "behavior": "After loadState classifies a state.json as corrupt and archives it, the canonical .sui-deepbook-course/state.json file still exists on disk with its original (non-JSON) bytes byte-for-byte unmodified.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A4"
+  },
+  {
+    "id": "T-050",
+    "name": "two corruptions in the same wall-clock second produce two distinct archive paths",
+    "behavior": "Calling loadState twice in succession against the same corrupt state.json (without any sleep) produces two corrupt classifications whose archivedTo values are distinct absolute paths and both files exist on disk after the second call.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A4"
+  },
+  {
+    "id": "T-051",
+    "name": "archive filename uses ISO-8601 timestamp suffix",
+    "behavior": "The archivedTo path returned for a corrupt state.json matches /state\\.corrupt-\\d{4}-\\d{2}-\\d{2}T\\d{2}[:-]\\d{2}[:-]\\d{2}.*\\.json$/ — the timestamp portion is parseable as ISO-8601 (or a filesystem-safe ISO-8601 variant with `:` replaced by `-`).",
+    "kind": "unit",
+    "target_file": "mcp/server/src/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A4"
+  },
+  {
+    "id": "T-052",
+    "name": "loadState on JSON-valid state.json with unknown schema_version returns kind=schema-mismatch",
+    "behavior": "Given a state.json with schema_version=999 (otherwise well-shaped, fixture tests/fixtures/state/future-schema.json), loadState returns { kind: 'schema-mismatch', foundVersion: 999, message } with no `archivedTo` field set.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A5"
+  },
+  {
+    "id": "T-053",
+    "name": "schema-mismatch path writes no archive file and leaves canonical state.json untouched",
+    "behavior": "After loadState classifies a state.json as schema-mismatch, no file matching state.corrupt-*.json exists under .sui-deepbook-course/, and the canonical state.json bytes are byte-for-byte identical to the pre-call bytes.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A5"
+  },
+  {
+    "id": "T-054",
+    "name": "schema-mismatch and corruption produce structurally distinct results",
+    "behavior": "For two equivalent project roots (one with corrupt bytes, one with future-schema bytes), loadState returns two results with kind values that differ ('corrupt' vs 'schema-mismatch'), the corrupt result has an archivedTo field while the schema-mismatch result does not, and the schema-mismatch result has a foundVersion field while the corrupt one does not.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A5"
+  },
+  {
+    "id": "T-055",
+    "name": "schema-mismatch message matches /incompatible|migration/i",
+    "behavior": "The `message` field on a schema-mismatch loadState result contains a substring matching the regex /incompatible|migration/i — covering the cycle's user-facing 'manual migration' guidance.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A11"
+  },
+  {
+    "id": "T-056",
+    "name": "corruption message matches /corrupt|archived/i",
+    "behavior": "The `message` field on a corrupt loadState result contains a substring matching the regex /corrupt|archived/i — distinct wording from schema-mismatch.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A11"
+  },
+  {
+    "id": "T-057",
+    "name": "loadState ENOENT on state.json maps to kind=absent (not corrupt)",
+    "behavior": "When fs.readFile (or the equivalent sync API) rejects with err.code='ENOENT' on the state.json read, loadState classifies the result as { kind: 'absent' } and emits no archive file.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A6"
+  },
+  {
+    "id": "T-058",
+    "name": "loadState EACCES on present state.json maps to kind=corrupt with read-error message (not absent)",
+    "behavior": "Spy fs.readFile to throw an Error with code='EACCES'; loadState classifies the result as { kind: 'corrupt', message } and the message contains a substring matching /read|permission|access/i. Critically, kind is NOT 'absent' — distinguishing ENOENT from other read errors (resolves cycle 1 C002/C010 lesson).",
+    "kind": "unit",
+    "target_file": "mcp/server/src/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A6"
+  },
+  {
+    "id": "T-059",
+    "name": "state.ts source contains no bare catch{} blocks",
+    "behavior": "Reading mcp/server/src/state.ts as a string and grep-matching `/catch\\s*\\{/` (a `catch` followed by `{` with no error binding) returns zero matches — every catch must bind the error and branch on err.code.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A6"
+  },
+  {
+    "id": "T-060",
+    "name": "saveState writes via tmp-then-rename — canonical state.json is the rename target, never written directly",
+    "behavior": "Spy on fs.promises.writeFile (or fs.writeFile) and fs.promises.rename. After saveState resolves, the writeFile spy's path argument is NOT equal to <projectRoot>/.sui-deepbook-course/state.json, AND the rename spy's destination argument IS equal to that path. The tmp path lives under .sui-deepbook-course/ (same dir as the target).",
+    "kind": "unit",
+    "target_file": "mcp/server/src/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-061",
+    "name": "saveState invokes writeFile then fsync then rename in that order",
+    "behavior": "Spies on writeFile, fsync (or fdatasync), and rename record their invocation timestamps in a shared array; after saveState resolves, the recorded order is [writeFile, fsync, rename]. The fsync target is the tmp file's open descriptor (or path), not the canonical state.json.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-062",
+    "name": "saveState atomicity — rename failure leaves canonical state.json with prior contents",
+    "behavior": "Seed canonical state.json with prior bytes B0 (a known state). Mock fs.promises.rename to throw an Error('simulated'). saveState rejects (or resolves with error surfaced); after the call, fs.readFileSync of the canonical state.json equals B0 byte-for-byte. The previous good copy survived because rename never completed.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-063",
+    "name": "saveState atomicity — rename failure when no prior state leaves canonical state.json absent",
+    "behavior": "On a fresh project root with no canonical state.json, mock fs.promises.rename to throw. saveState rejects; afterward, fs.existsSync(<root>/.sui-deepbook-course/state.json) returns false — no half-written file is left at the canonical path.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-064",
+    "name": "saveState round-trip — saveState then loadState yields { kind: ok, state } deep-equal",
+    "behavior": "Construct a State value S that satisfies the schema validator (schema_version=1, full cursor/ladder/history/personalization). Call saveState(root, S); then call loadState(root); assert the result deep-equals { kind: 'ok', state: S }.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A8"
+  },
+  {
+    "id": "T-065",
+    "name": "saveState creates .sui-deepbook-course/ directory on first save",
+    "behavior": "On a fresh project root with no .sui-deepbook-course/ directory, after saveState resolves, fs.statSync(<root>/.sui-deepbook-course/) returns a directory and the canonical state.json exists with the saved bytes. (Distinguishes saveState from loadState — the former is permitted to create the dir, the latter is not.)",
+    "kind": "unit",
+    "target_file": "mcp/server/src/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-066",
+    "name": "STATE_SCHEMA_VERSION constant equals 1",
+    "behavior": "Importing STATE_SCHEMA_VERSION from mcp/server/src/state.ts equals the integer literal 1 — the initial value declared in spec.md ## State Schema.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A1"
+  },
+  {
+    "id": "T-067",
+    "name": "validateState accepts a well-formed State (schema_version=1, all fields)",
+    "behavior": "validateState({ schema_version: 1, selected_path: '01-orderbook-viewer', personalization: { poll_interval_ms: 3000, pool_subset: 'both' }, cursor: { phase_id: 'p1-bootstrap', spot_id: 'p1-spot-1' }, ladder: { 'p1-spot-1': { hint_used: false, reference_shown: false, auto_completed: false } }, history: [{ ts: '2026-04-28T12:00:00Z', event: 'start' }] }) returns { ok: true, value: <input> }.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/schemas/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A3"
+  },
+  {
+    "id": "T-068",
+    "name": "validateState rejects state with non-numeric schema_version",
+    "behavior": "validateState with schema_version: '1' (string instead of number) returns { ok: false, error } where error references 'schema_version'.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/schemas/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A3"
+  },
+  {
+    "id": "T-069",
+    "name": "validateState rejects state with missing selected_path",
+    "behavior": "validateState on an object missing the selected_path key returns { ok: false, error } where error references 'selected_path'.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/schemas/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A3"
+  },
+  {
+    "id": "T-070",
+    "name": "validateState rejects state with missing cursor.phase_id",
+    "behavior": "validateState on a state whose cursor object lacks phase_id returns { ok: false, error } where error references 'cursor' or 'phase_id'.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/schemas/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A3"
+  },
+  {
+    "id": "T-071",
+    "name": "validateState rejects state with missing cursor.spot_id",
+    "behavior": "validateState on a state whose cursor object lacks spot_id returns { ok: false, error } where error references 'cursor' or 'spot_id'.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/schemas/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A3"
+  },
+  {
+    "id": "T-072",
+    "name": "validateState rejects state with non-object personalization",
+    "behavior": "validateState with personalization: 'not-an-object' returns { ok: false, error } where error references 'personalization'.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/schemas/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A3"
+  },
+  {
+    "id": "T-073",
+    "name": "validateState rejects state with non-array history",
+    "behavior": "validateState with history: 'not-array' returns { ok: false, error } where error references 'history'.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/schemas/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A3"
+  },
+  {
+    "id": "T-074",
+    "name": "validateState rejects state with non-object ladder",
+    "behavior": "validateState with ladder: ['array', 'not-object'] (or any non-object) returns { ok: false, error } where error references 'ladder'.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/schemas/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A3"
+  },
+  {
+    "id": "T-075",
+    "name": "start tool — state-absent path returns state: null with no state warning",
+    "behavior": "Run runStart against a project root that has no .sui-deepbook-course/. Response.state === null AND response.warnings contains zero entries with kind matching /^state-/ (no state-corrupt or state-schema-mismatch warning).",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/start.ts",
+    "test_file": "tests/start.tool.test.ts",
+    "covers_contract_requirement": "A10"
+  },
+  {
+    "id": "T-076",
+    "name": "start tool — state-ok path surfaces the loaded state",
+    "behavior": "Seed <root>/.sui-deepbook-course/state.json with valid bytes (schema_version=1, cursor at p2-retry/p2-spot-1, fixture valid-cursor-p2.json). Response.state deep-equals the parsed file bytes; response.warnings has zero entries with kind matching /^state-/.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/start.ts",
+    "test_file": "tests/start.tool.test.ts",
+    "covers_contract_requirement": "A10"
+  },
+  {
+    "id": "T-077",
+    "name": "start tool — state-corrupt path returns state: null and a state-corrupt warning naming the archive",
+    "behavior": "Seed <root>/.sui-deepbook-course/state.json with non-JSON bytes (fixture corrupt.json). Response.state === null. response.warnings (or response.stateWarning, whichever the implementer chose) contains an entry whose kind === 'state-corrupt' and whose message OR a sibling field references the archived path under .sui-deepbook-course/state.corrupt-*.json.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/start.ts",
+    "test_file": "tests/start.tool.test.ts",
+    "covers_contract_requirement": "A10"
+  },
+  {
+    "id": "T-078",
+    "name": "start tool — state-schema-mismatch path returns state: null and a state-schema-mismatch warning that does NOT name an archive",
+    "behavior": "Seed <root>/.sui-deepbook-course/state.json with future-schema.json bytes (schema_version=999). Response.state === null. response carries an entry whose kind === 'state-schema-mismatch' and whose message references the offending version 999 (substring '999'). No state.corrupt-*.json file exists under .sui-deepbook-course/. The schema-mismatch warning entry has no archivedTo / archived path field.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/start.ts",
+    "test_file": "tests/start.tool.test.ts",
+    "covers_contract_requirement": "A10"
+  },
+  {
+    "id": "T-079",
+    "name": "start tool — when outputStyleOk=false, loadState is NOT invoked",
+    "behavior": "Force probeOutputStyle to return ok=false. Use vi.spyOn on the state module's loadState export (or vi.mock with a tracked stub). After runStart returns, the loadState spy has zero calls.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/start.ts",
+    "test_file": "tests/start.tool.test.ts",
+    "covers_contract_requirement": "A9"
+  },
+  {
+    "id": "T-080",
+    "name": "start tool — when outputStyleOk=false, .sui-deepbook-course/ is not created and state archive is not written",
+    "behavior": "Seed projectRoot with non-JSON state.json bytes (corrupt fixture) AND set probeOutputStyle to return ok=false. Spy on fs.mkdir, fs.mkdirSync, fs.promises.mkdir, fs.writeFile, fs.writeFileSync, fs.promises.writeFile, fs.rename, fs.renameSync, fs.promises.rename. Run runStart. Snapshot before/after equality holds, and zero invocations are recorded across the spy set; specifically, no state.corrupt-*.json archive is created. AC-1.3 is preserved on the new surface.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/start.ts",
+    "test_file": "tests/start.tool.test.ts",
+    "covers_contract_requirement": "A9"
+  },
+  {
+    "id": "T-081",
+    "name": "start tool — outputStyleOk=false response carries state: null without invoking loadState",
+    "behavior": "Force probeOutputStyle ok=false. response.outputStyleOk === false AND response.state === null. (Confirms that the early-return path satisfies the documented response shape without delegating to state machinery.)",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/start.ts",
+    "test_file": "tests/start.tool.test.ts",
+    "covers_contract_requirement": "A9"
+  },
+  {
+    "id": "T-082",
+    "name": "start tool — response shape preserves cycle 1's top-level keys plus widens state",
+    "behavior": "response keys (sorted) equal ['outputStyleOk', 'paths', 'preflight', 'state', 'warnings']. The `state` field is null (absent run) or matches the State shape (ok run); no existing field is renamed or removed; the top-level key set is exactly cycle 1's set with no new top-level keys.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/start.ts",
+    "test_file": "tests/start.tool.test.ts",
+    "covers_contract_requirement": "A10"
+  },
+  {
+    "id": "T-083",
+    "name": "start tool — corrupt and schema-mismatch warning kinds are structurally distinct",
+    "behavior": "Across two separate runStart invocations (one against corrupt fixture, one against future-schema fixture), the kind value of the surfaced state warning differs ('state-corrupt' vs 'state-schema-mismatch'); the corrupt path's warning carries an archive path field; the schema-mismatch path's warning does not, but carries the offending version.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/start.ts",
+    "test_file": "tests/start.tool.test.ts",
+    "covers_contract_requirement": "A10"
+  },
+  {
+    "id": "T-084",
+    "name": "start tool — corruption response message matches /corrupt|archived/i; schema-mismatch matches /incompatible|migration/i",
+    "behavior": "The message string surfaced via runStart on the corrupt fixture matches /corrupt|archived/i. The message string on the future-schema fixture matches /incompatible|migration/i. The two strings differ.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/start.ts",
+    "test_file": "tests/start.tool.test.ts",
+    "covers_contract_requirement": "A11"
+  },
+  {
+    "id": "T-085",
+    "name": "registerTools is exported from mcp/server/src/index.ts and registers tools on a passed McpServer",
+    "behavior": "Importing { registerTools } from '../mcp/server/src/index.js' returns a function. Calling registerTools(server) where server is a freshly-constructed McpServer instance does not throw, and afterward the server's listTools() (or equivalent SDK call) reports the 'start' tool name (and any other cycle-1/cycle-2 tools).",
+    "kind": "integration",
+    "target_file": "mcp/server/src/index.ts",
+    "test_file": "tests/harness.mcp.test.ts",
+    "covers_contract_requirement": "A12"
+  },
+  {
+    "id": "T-086",
+    "name": "harness boots an McpServer and a Client over InMemoryTransport pair",
+    "behavior": "Boot the harness; assert it returns an object exposing a callTool (or invokeTool) function. The harness internally constructs an McpServer, calls registerTools, connects an InMemoryTransport pair from @modelcontextprotocol/sdk, and exposes the SDK Client. callTool('start', { projectRoot }) returns a real MCP CallToolResult (object with `content` array of `{ type: 'text', text: <json> }` per the SDK), not a synthetic shape.",
+    "kind": "integration",
+    "target_file": "scripts/e2e/harness.ts",
+    "test_file": "tests/harness.mcp.test.ts",
+    "covers_contract_requirement": "A12"
+  },
+  {
+    "id": "T-087",
+    "name": "harness response is framed as a real MCP tools/call result (content: [{type:'text', text}])",
+    "behavior": "The result of harness.callTool('start', { projectRoot }) is an object with response.content as an array; response.content[0].type === 'text'; response.content[0].text is a JSON string that JSON.parse-s into the documented start payload (outputStyleOk, preflight, paths, state, warnings keys).",
+    "kind": "integration",
+    "target_file": "scripts/e2e/harness.ts",
+    "test_file": "tests/harness.mcp.test.ts",
+    "covers_contract_requirement": "A12"
+  },
+  {
+    "id": "T-088",
+    "name": "harness source contains no `runStart` import and no per-tool if-branch",
+    "behavior": "Reading scripts/e2e/harness.ts as a string: regex /import\\s*\\{[^}]*runStart[^}]*\\}/ matches zero times; regex /from\\s+['\"][^'\"]*tools\\/start/ matches zero times. Additionally a regex /if\\s*\\([^)]*toolName[^)]*===\\s*['\"]start['\"]/ matches zero times — adding a new tool to registerTools must be sufficient.",
+    "kind": "unit",
+    "target_file": "scripts/e2e/harness.ts",
+    "test_file": "tests/harness.mcp.test.ts",
+    "covers_contract_requirement": "A13"
+  },
+  {
+    "id": "T-089",
+    "name": "harness E-006 scenario — corrupt state.json yields state-corrupt warning + archive on disk",
+    "behavior": "Stage a temp project root, install corrupt.json bytes at <root>/.sui-deepbook-course/state.json (fixture withCorruptState helper). Boot the harness, callTool('start', { projectRoot }), parse the JSON content. Assert payload.state === null; payload's warnings (or stateWarning) carry an entry with kind === 'state-corrupt'; a state.corrupt-*.json file now exists under <root>/.sui-deepbook-course/.",
+    "kind": "integration",
+    "target_file": "scripts/e2e/harness.ts",
+    "test_file": "tests/harness.mcp.test.ts",
+    "covers_contract_requirement": "A14"
+  },
+  {
+    "id": "T-090",
+    "name": "harness E-015 scenario — valid state at p2-retry/p2-spot-1 resumes via start",
+    "behavior": "Stage a temp project root, install valid-cursor-p2.json bytes at <root>/.sui-deepbook-course/state.json (fixture withValidState helper). Boot harness, callTool('start', { projectRoot }), parse JSON. Assert payload.state.cursor.phase_id === 'p2-retry', payload.state.cursor.spot_id === 'p2-spot-1', payload.state.ladder['p1-spot-1'].hint_used === true. No state-corrupt or state-schema-mismatch warning is surfaced.",
+    "kind": "integration",
+    "target_file": "scripts/e2e/harness.ts",
+    "test_file": "tests/harness.mcp.test.ts",
+    "covers_contract_requirement": "A14"
+  },
+  {
+    "id": "T-091",
+    "name": "harness E-016 scenario — future schema_version yields state-schema-mismatch warning, no archive",
+    "behavior": "Stage a temp project root, install future-schema.json bytes at <root>/.sui-deepbook-course/state.json (fixture withFutureSchemaState helper). Boot harness, callTool('start', { projectRoot }), parse JSON. Assert payload.state === null; warnings carry an entry with kind === 'state-schema-mismatch' whose message contains '999' and matches /incompatible|migration/i; NO file matching state.corrupt-*.json exists under <root>/.sui-deepbook-course/; canonical state.json bytes are unchanged.",
+    "kind": "integration",
+    "target_file": "scripts/e2e/harness.ts",
+    "test_file": "tests/harness.mcp.test.ts",
+    "covers_contract_requirement": "A14"
+  },
+  {
+    "id": "T-092",
+    "name": "no shell-action literal in state.ts, tools/start.ts, or harness.ts",
+    "behavior": "Read mcp/server/src/state.ts, mcp/server/src/tools/start.ts, and scripts/e2e/harness.ts as strings. Each file contains zero substring matches for /kind\\s*:\\s*['\"]shell['\"]/ — preserving cycle 1's A14 invariant on the new surface (A16). runPreflightProbe in cycle 3 will be the first emitter.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A16"
+  },
+  {
+    "id": "T-093",
+    "name": "engine grep — '01-orderbook-viewer' literal does NOT appear in mcp/server/src/state.ts",
+    "behavior": "fs.readFileSync('mcp/server/src/state.ts').indexOf('01-orderbook-viewer') === -1 — state machinery is path-slug-agnostic. Stricter complement to T-027 (A17), which scans the broader engine surface; this test pins the new file specifically.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A17"
+  },
+  {
+    "id": "T-094",
+    "name": "loadState round-trips a state with non-default personalization values",
+    "behavior": "Save a State whose personalization is { poll_interval_ms: 5000, pool_subset: 'DEEP_SUI' }, then loadState. Returned state.personalization deep-equals the saved object — confirming personalization is preserved and not normalized away. (Cycle 4 dependency.)",
+    "kind": "unit",
+    "target_file": "mcp/server/src/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A3"
+  }
+]

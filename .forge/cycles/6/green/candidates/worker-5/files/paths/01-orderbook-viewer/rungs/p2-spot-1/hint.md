@@ -1,0 +1,3 @@
+# Hint — withRetry helper (Phase 2, Spot 1)
+
+The `withRetry` helper is a higher-order function that wraps an async operation with automatic retry logic. Think about what parameters it needs: the function to retry, the maximum number of attempts, and optionally a delay strategy between attempts. For exponential back-off, the delay between attempt `n` and `n+1` can be computed as `baseDelayMs * 2^n`. If all attempts are exhausted, re-throw the last error so the caller can handle the failure. Remember that `async/await` with a `for` loop is simpler and more readable than recursive promises for this pattern.

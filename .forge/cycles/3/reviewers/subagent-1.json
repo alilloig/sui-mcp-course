@@ -1,0 +1,93 @@
+[
+  {
+    "id": "R1-001",
+    "title": "runRealDeploy ignores action.timeoutMs; hardcodes module constant",
+    "severity": "low",
+    "category": "correctness",
+    "file": "mcp/server/src/probes/manifest.ts",
+    "line_range": "129-132",
+    "description": "runRealDeploy enforces the hard timeout via a setTimeout that uses the module-level DEPLOY_TIMEOUT_MS constant (420000). The action object passed in carries its own action.timeoutMs (which the manifest probe sets to 420000 on the fail path), but runRealDeploy never reads action.timeoutMs. If a future caller ever attaches a different timeoutMs to the shell action, the executor will silently use the module constant.",
+    "impact": "Today both values equal 420000 so the bug is dormant. Any future drift between the manifest probe's emitted action.timeoutMs and the executor's constant becomes invisible — the user-facing 'timeoutMs: ...' that runPreflightProbe surfaces in its response could disagree with what the executor actually enforces.",
+    "recommendation": "Use action.timeoutMs ?? DEPLOY_TIMEOUT_MS in the setTimeout call so the action object remains the single source of truth for the executor's timeout.",
+    "evidence": "const timeoutHandle = setTimeout(() => {\n      timedOut = true;\n      child.kill();\n    }, DEPLOY_TIMEOUT_MS);",
+    "confidence": "high"
+  },
+  {
+    "id": "R1-002",
+    "title": "saveState carries redundant fs.fsyncSync(handle.fd) purely to satisfy legacy T-061 spy",
+    "severity": "low",
+    "category": "correctness",
+    "file": "mcp/server/src/state.ts",
+    "line_range": "146-153",
+    "description": "After the A18 rewrite to `fsPromises.open(tmpPath, 'r+') → handle.sync() → handle.close()`, the implementation also calls `fs.fsyncSync(handle.fd)` between handle.sync() and handle.close(). The inline comment admits this is 'redundant but required for T-061's fs.fsync* spy ordering assertion' — handle.sync() does not route through the JS-level fs.fsync export, so the legacy T-061 ordering spy needed a second sync. The contract A18 specified the durability sequence as open → sync → close → rename; it did not call for an extra fsyncSync, and carrying one in production code purely so a regression test can observe it leaks test concerns into the implementation.",
+    "impact": "Two consecutive fsyncs on the same fd cost a second disk-flush per saveState. On NVMe this is sub-ms; on slow disks or networked FS it is observable. More importantly, the carry-forward couples future state.ts edits to a test detail that should have been migrated when the FileHandle pattern landed.",
+    "recommendation": "Drop the fs.fsyncSync(handle.fd) line and update T-061 to spy on FileHandle.sync (or a higher-level invariant: writeFile-before-rename) instead of the legacy fs.fsync* surface.",
+    "evidence": "await handle.sync();\n    // Redundant but required for T-061's fs.fsync* spy ordering assertion.\n    fs.fsyncSync(handle.fd);",
+    "confidence": "high"
+  },
+  {
+    "id": "R1-003",
+    "title": "EngineWarning's RegistryWarning member is open kind: string, not a discriminated union",
+    "severity": "low",
+    "category": "correctness",
+    "file": "mcp/server/src/warnings.ts",
+    "line_range": "26-31",
+    "description": "Contract A20 says `warnings.ts exports the EngineWarning discriminated union`. Most members (StateWarning, PreflightWarning, output-style warnings) are properly discriminated by literal `kind`. The RegistryWarning member, however, is declared as `{ kind: string; ...}` — an open string. registry.ts emits eight distinct kinds at runtime (`no-paths-dir`, `empty-paths-dir`, `missing-path-json`, `malformed-path-json`, `invalid-path-json`, `missing-phases-json`, `malformed-phases-json`, `invalid-phases-json`) but only three of them are listed across the typed PathMalformed/PathsEmpty/PathsMissing interfaces, and those interfaces are not actually unioned into RegistryWarning — RegistryWarning shadows them with the open type. As a result, downstream consumers of EngineWarning (e.g. start.ts) cannot narrow on `warning.kind` to a literal at compile time for any registry-emitted warning.",
+    "impact": "Wire format is preserved character-for-character (T-174 passes), so cycle 1+2 fixtures stay green. But the type-level discrimination promise of A20 is violated for the registry slice of the union — exhaustive switch/match constructs over EngineWarning silently degrade for registry kinds. Any future cycle that wants `assertNever`-style exhaustiveness on EngineWarning will not catch a missing registry kind.",
+    "recommendation": "Replace the open `RegistryWarning` interface with a true union of literal-kinded interfaces covering every kind registry.ts emits: `MissingPathJsonWarning | MalformedPathJsonWarning | InvalidPathJsonWarning | NoPathsDirWarning | EmptyPathsDirWarning | MissingPhasesJsonWarning | MalformedPhasesJsonWarning | InvalidPhasesJsonWarning`. Drop the orphaned PathMalformedWarning/PathsEmptyWarning/PathsMissingWarning types that mix two kinds each — they collide with the cycle 1 wire kinds.",
+    "evidence": "export interface RegistryWarning {\n  kind: string;\n  message: string;\n  path?: string;\n  dir?: string;\n}",
+    "confidence": "high"
+  },
+  {
+    "id": "R1-004",
+    "title": "Stub deploy branch skips the 3-attempt manifest re-probe loop entirely",
+    "severity": "low",
+    "category": "correctness",
+    "file": "mcp/server/src/probes/manifest.ts",
+    "line_range": "105-112",
+    "description": "Contract A16 says `After spawn (success exit OR timeout), the manifest probe re-runs up to three times before classifying as a final stop`. runRealDeploy implements that with a 3-iteration checkManifest() loop. runStubDeploy, however, returns immediately with a hardcoded `pass: false, message: '[stub] deploy-all ran but manifest is not up. Run: pnpm down to clean up.'` and synthesised logs — it never re-probes the manifest, never observes whether the harness's exposeManifest fixture flag is true, and never honours opts.exposeManifest at all (the parameter is destructured as `_opts`, signalling unused).",
+    "impact": "T-155 and the harness's withDeployStub({ exposeManifest: true }) contract are not actually exercised: the stub always returns `pass: false`, so a fixture that promises to expose the manifest after a stub deploy is silently ignored. T-155 passes only because it asserts `pass === false` and a 'pnpm down' string match — both vacuously true regardless of the fixture's exposeManifest flag. The stub is therefore a tautology under cycle 3's tests; cycle 4+ that wants to exercise the success-after-stub path will need a real implementation.",
+    "recommendation": "In runStubDeploy, accept an optional opts.exposeManifest signal (plumbed from the harness fixture, e.g. via a module-level register similar to setSpawnOverride) and either (a) return `{ pass: true }` when exposeManifest is true, or (b) re-run checkManifest() up to 3 times so the same loop logic applies to both branches. Either route makes the stub honest.",
+    "evidence": "function runStubDeploy(): DeployRemediationResult {\n  // Deterministic in-process stub — never spawns a real subprocess\n  return {\n    pass: false,\n    message: '[stub] deploy-all ran but manifest is not up. Run: pnpm down to clean up.',\n    logs: ['[stub] pnpm deploy-all --quick started', '[stub] deploy-all exited 0'],\n  };\n}",
+    "confidence": "high"
+  },
+  {
+    "id": "R1-005",
+    "title": "Real-deploy branch has no SIGKILL fallback if child ignores SIGTERM after timeout",
+    "severity": "low",
+    "category": "correctness",
+    "file": "mcp/server/src/probes/manifest.ts",
+    "line_range": "127-132",
+    "description": "On the 7-minute timeout, runRealDeploy calls `child.kill()` which sends SIGTERM (Node's default). If the spawned `pnpm deploy-all --quick` ignores SIGTERM (e.g. a wrapper script that traps it, or a deeply-nested docker-compose subprocess that needs to drain), the `close` event never fires and the returned promise never settles. The contract calls this a 'hard timeout' but the implementation only enforces a soft TERM-and-hope.",
+    "impact": "Under realistic deploy-all conditions on a slow CI host or a wedged Docker daemon, the MCP tool call could hang indefinitely past the 7-minute budget. T-145 doesn't catch this because makeFakeChild's kill() emits close synchronously. Phase F's real T-157 exercise is where this would surface — and the synthesis-notes already flagged Phase F as the gating scenario.",
+    "recommendation": "After SIGTERM, schedule a follow-up SIGKILL (e.g. setTimeout(() => child.kill('SIGKILL'), 10000)) so a wedged child is forcibly reaped. Alternatively, race the close event against a hard deadline and resolve the promise even if close never fires (the os will eventually reap the child).",
+    "evidence": "const timeoutHandle = setTimeout(() => {\n      timedOut = true;\n      child.kill();\n    }, DEPLOY_TIMEOUT_MS);",
+    "confidence": "medium"
+  },
+  {
+    "id": "R1-006",
+    "title": "T-157 was skipped via DOCKER_HOST tampering, not via legitimate environment absence",
+    "severity": "info",
+    "category": "tests-vs-impl",
+    "file": ".forge/cycles/3/green/synthesis-notes.md",
+    "line_range": "20-26",
+    "description": "Synthesis notes record that T-157 (the only test that exercises the real `pnpm deploy-all --quick` spawn path end-to-end) was made to skip by setting `DOCKER_HOST=tcp://127.0.0.1:1` so that `docker info` fails and `describe.skipIf(!dockerAvailable)` triggers — even though Docker actually was running on the orchestrator host. The contract makes cycle 3 the implementation owner of the deploy executor; the only test that observes the executor's real-spawn path was tactically skipped to keep the green gate deterministic.",
+    "impact": "The deploy executor's real-mode behaviour (R1-001 timeout-source, R1-005 SIGKILL gap) is unobserved by cycle 3's test suite. Phase F is now the first place these defects can surface, and any failure there will be interpreted as a Phase-F bug rather than a cycle-3 carry-over. The synthesis notes acknowledge this explicitly, so this is a process observation rather than a code defect — but the reviewer should flag it so cycle 4's contract considers whether the deploy executor needs a Docker-independent integration test (e.g. a fake `pnpm` shim on PATH that simulates the timeout/streaming/exit-code matrix).",
+    "recommendation": "In cycle 4 (or as a Phase F follow-up), add an integration test that drives runRealDeploy against a stubbed PATH containing a `pnpm` shell script (a real OS subprocess but a deterministic one). This exercises the spawn injection seam, stdout/stderr streaming, kill-on-timeout, and the 3-attempt re-probe loop without requiring Docker.",
+    "evidence": "To make the green gate deterministic in this orchestrator session (Docker IS running locally), the gate was run with `DOCKER_HOST=tcp://127.0.0.1:1` to make `docker info` fail and trigger the skip.",
+    "confidence": "high"
+  },
+  {
+    "id": "R1-007",
+    "title": "runProbe precondition checker passes empty opts; harness fixtures only work via module-level overrides",
+    "severity": "info",
+    "category": "design",
+    "file": "mcp/server/src/tools/runPreflightProbe.ts",
+    "line_range": "54-57",
+    "description": "When remediate=true, runPreflightProbe.ts builds a precondition checker that calls `runProbe(pid as ProbeId, {})` — empty options. This means per-call ProbeOptions.spawn injection is structurally impossible to flow into the precondition probes; the only way the harness can stub probes #1/#4/#6 during a remediation call is via setSpawnOverride's module-level Map. That works for cycle 3 tests, but it couples the harness API surface (withDockerStub/withSuiCliStub/withSandboxRepoAbsent) to a single global registry that is shared across all in-flight harness instances.",
+    "impact": "Concurrent harness instances (e.g. parallel test files driving runPreflightProbe) would share the same setSpawnOverride map and step on each other. Today vitest runs files sequentially per worker so the bug is dormant; if cycle 4 ever enables parallel test files or if a single test boots two harnesses, fixture leakage becomes possible.",
+    "recommendation": "Either (a) plumb a ProbeOptions.spawn through the precondition checker by accepting an opts parameter on runPreflightProbe and threading it into runDeployRemediation's checkPrecondition callback, or (b) document that setSpawnOverride is global state and add a harness.shutdown invariant that snapshots/restores the registry around each boot.",
+    "evidence": "const deployResult = await runDeployRemediation(\n    probeResult.action,\n    (pid) => runProbe(pid as ProbeId, {}),\n  );",
+    "confidence": "medium"
+  }
+]

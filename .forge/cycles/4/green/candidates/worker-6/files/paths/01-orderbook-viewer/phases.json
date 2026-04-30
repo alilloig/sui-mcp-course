@@ -1,0 +1,65 @@
+{
+  "phases": [
+    {
+      "id": "p1-bootstrap",
+      "title": "Bootstrap: Manifest → SDK Config",
+      "explainer_md": "phases/p1-bootstrap.md",
+      "spots": [
+        {
+          "id": "p1-spot-1",
+          "title": "Wire manifest to DeepBook SDK client",
+          "prompt": "Wire the deployment manifest into the DeepBook SDK. Use the `{{ pool_subset }}` pools from the manifest to construct `packageIds`, `coinMap`, and `poolMap` objects that the SDK needs. These values come from `src/App.tsx` lines 39–58 and feed into the `deepbook()` call in the `useMemo` hook.",
+          "target_file": "src/App.tsx",
+          "target_range": "39-58",
+          "verification": {
+            "mode": "compile",
+            "command": "pnpm build"
+          },
+          "rungs": {
+            "hint_md": "rungs/p1-spot-1/hint.md",
+            "reference_md": "rungs/p1-spot-1/reference.md",
+            "auto_write_md": "rungs/p1-spot-1/auto.md"
+          },
+          "doc_links": [
+            ".sui-docs/develop/transactions/ptbs/inputs-and-results.mdx",
+            ".ts-sdk-docs/sui/clients/grpc.mdx"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "p2-polling",
+      "title": "Polling Loop",
+      "spots": [
+        {
+          "id": "p2-spot-1",
+          "title": "TBD in cycle 5+",
+          "prompt": "TBD in cycle 5+ — polling loop implementation will be scaffolded here.",
+          "target_file": "src/App.tsx",
+          "target_range": "1-1",
+          "verification": {
+            "mode": "compile",
+            "command": "pnpm build"
+          }
+        }
+      ]
+    },
+    {
+      "id": "p3-display",
+      "title": "Display Layer",
+      "spots": [
+        {
+          "id": "p3-spot-1",
+          "title": "TBD in cycle 5+",
+          "prompt": "TBD in cycle 5+ — display layer will be scaffolded here.",
+          "target_file": "src/App.tsx",
+          "target_range": "1-1",
+          "verification": {
+            "mode": "compile",
+            "command": "pnpm build"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,262 @@
+export interface VerificationCompile {
+  mode: 'compile';
+  command: string;
+}
+
+export interface VerificationTest {
+  mode: 'test';
+  command: string;
+  expected_pass?: number;
+}
+
+export interface VerificationSimulate {
+  mode: 'simulate';
+  endpoint: string;
+  expected_status: number;
+}
+
+export interface VerificationCustom {
+  mode: 'custom';
+  command: string;
+  expected_stdout_regex: string;
+}
+
+export type VerificationSpec =
+  | VerificationCompile
+  | VerificationTest
+  | VerificationSimulate
+  | VerificationCustom;
+
+export interface SpotRungs {
+  hint_md: string;
+  reference_md: string;
+  auto_write_md: string;
+}
+
+export interface SpotData {
+  id: string;
+  title?: string;
+  // Optional for backward-compat with stub spots (cycle-1/2/3 fixtures).
+  // Full spots (any of target_file/target_range/prompt/verification present)
+  // must have all four. Stub spots may omit all four.
+  target_file?: string;
+  target_range?: string;
+  prompt?: string;
+  verification?: VerificationSpec;
+  rungs?: SpotRungs;
+  doc_links?: string[];
+}
+
+export interface PhaseData {
+  id: string;
+  title?: string;
+  explainer_md?: string;
+  spots: SpotData[];
+}
+
+export interface PhasesData {
+  phases: PhaseData[];
+}
+
+type ValidationResult<T> =
+  | { ok: true; value: T }
+  | { ok: false; error: string };
+
+function validateVerification(v: unknown, phaseId: string, spotId: string): ValidationResult<VerificationSpec> {
+  if (typeof v !== 'object' || v === null) {
+    return { ok: false, error: `Phase ${phaseId} spot ${spotId}: verification must be an object` };
+  }
+  const obj = v as Record<string, unknown>;
+  const mode = obj['mode'];
+
+  if (mode !== 'compile' && mode !== 'test' && mode !== 'simulate' && mode !== 'custom') {
+    return {
+      ok: false,
+      error: `Phase ${phaseId} spot ${spotId}: verification.mode must be one of compile|test|simulate|custom`,
+    };
+  }
+
+  if (mode === 'compile') {
+    if (typeof obj['command'] !== 'string') {
+      return { ok: false, error: `Phase ${phaseId} spot ${spotId}: compile verification requires a command string` };
+    }
+    return { ok: true, value: { mode: 'compile', command: obj['command'] as string } };
+  }
+
+  if (mode === 'test') {
+    if (typeof obj['command'] !== 'string') {
+      return { ok: false, error: `Phase ${phaseId} spot ${spotId}: test verification requires a command string` };
+    }
+    const result: VerificationTest = { mode: 'test', command: obj['command'] as string };
+    if (typeof obj['expected_pass'] === 'number') {
+      result.expected_pass = obj['expected_pass'] as number;
+    }
+    return { ok: true, value: result };
+  }
+
+  if (mode === 'simulate') {
+    if (typeof obj['endpoint'] !== 'string') {
+      return { ok: false, error: `Phase ${phaseId} spot ${spotId}: simulate verification requires an endpoint string` };
+    }
+    if (typeof obj['expected_status'] !== 'number') {
+      return { ok: false, error: `Phase ${phaseId} spot ${spotId}: simulate verification requires expected_status number` };
+    }
+    return {
+      ok: true,
+      value: {
+        mode: 'simulate',
+        endpoint: obj['endpoint'] as string,
+        expected_status: obj['expected_status'] as number,
+      },
+    };
+  }
+
+  // mode === 'custom'
+  if (typeof obj['command'] !== 'string') {
+    return { ok: false, error: `Phase ${phaseId} spot ${spotId}: custom verification requires a command string` };
+  }
+  if (typeof obj['expected_stdout_regex'] !== 'string') {
+    return {
+      ok: false,
+      error: `Phase ${phaseId} spot ${spotId}: custom verification requires expected_stdout_regex string`,
+    };
+  }
+  return {
+    ok: true,
+    value: {
+      mode: 'custom',
+      command: obj['command'] as string,
+      expected_stdout_regex: obj['expected_stdout_regex'] as string,
+    },
+  };
+}
+
+export function validatePhases(v: unknown): ValidationResult<PhasesData> {
+  if (typeof v !== 'object' || v === null) {
+    return { ok: false, error: 'phases.json must be an object' };
+  }
+  const obj = v as Record<string, unknown>;
+
+  if (!Array.isArray(obj['phases'])) {
+    return { ok: false, error: 'Missing required field: phases (must be an array)' };
+  }
+
+  const phases = obj['phases'] as unknown[];
+  if (phases.length === 0) {
+    return { ok: false, error: 'phases array must have at least one phase' };
+  }
+
+  const validatedPhases: PhaseData[] = [];
+
+  for (const phase of phases) {
+    if (typeof phase !== 'object' || phase === null) {
+      return { ok: false, error: 'Each phase must be an object' };
+    }
+    const p = phase as Record<string, unknown>;
+    if (typeof p['id'] !== 'string') {
+      return { ok: false, error: 'Each phase must have a string id' };
+    }
+    const phaseId = p['id'] as string;
+
+    if (!Array.isArray(p['spots'])) {
+      return { ok: false, error: `Phase ${phaseId}: spots must be an array` };
+    }
+    if ((p['spots'] as unknown[]).length === 0) {
+      return { ok: false, error: `Phase ${phaseId}: spots array must have at least one spot` };
+    }
+
+    const validatedSpots: SpotData[] = [];
+
+    for (const spot of p['spots'] as unknown[]) {
+      if (typeof spot !== 'object' || spot === null) {
+        return { ok: false, error: `Phase ${phaseId}: each spot must be an object` };
+      }
+      const s = spot as Record<string, unknown>;
+      if (typeof s['id'] !== 'string') {
+        return { ok: false, error: `Phase ${phaseId}: each spot must have a string id` };
+      }
+      const spotId = s['id'] as string;
+
+      // Determine if this is a "full" spot (any of the phase-1 fields present)
+      // or a "stub" spot (only id/title). Full spots require all four fields.
+      // Stub spots are backward-compat with cycle-1/2/3 fixtures (id + title only).
+      const hasAnyNewField =
+        s['target_file'] !== undefined ||
+        s['target_range'] !== undefined ||
+        s['prompt'] !== undefined ||
+        s['verification'] !== undefined;
+
+      const spotData: SpotData = { id: spotId };
+      if (typeof s['title'] === 'string') spotData.title = s['title'] as string;
+
+      if (hasAnyNewField) {
+        // Full spot validation: all four required fields must be present
+        if (typeof s['target_file'] !== 'string') {
+          return { ok: false, error: `Phase ${phaseId} spot ${spotId}: target_file must be a string` };
+        }
+        if (typeof s['target_range'] !== 'string') {
+          return { ok: false, error: `Phase ${phaseId} spot ${spotId}: target_range must be a string` };
+        }
+        if (typeof s['prompt'] !== 'string') {
+          return { ok: false, error: `Phase ${phaseId} spot ${spotId}: prompt must be a string` };
+        }
+
+        const verResult = validateVerification(s['verification'], phaseId, spotId);
+        if (!verResult.ok) {
+          return { ok: false, error: verResult.error };
+        }
+
+        spotData.target_file = s['target_file'] as string;
+        spotData.target_range = s['target_range'] as string;
+        spotData.prompt = s['prompt'] as string;
+        spotData.verification = verResult.value;
+
+        // Validate rungs if present
+        if (s['rungs'] !== undefined) {
+          if (typeof s['rungs'] !== 'object' || s['rungs'] === null) {
+            return { ok: false, error: `Phase ${phaseId} spot ${spotId}: rungs must be an object` };
+          }
+          const r = s['rungs'] as Record<string, unknown>;
+          if (typeof r['hint_md'] !== 'string') {
+            return { ok: false, error: `Phase ${phaseId} spot ${spotId}: rungs.hint_md must be a string` };
+          }
+          if (typeof r['reference_md'] !== 'string') {
+            return { ok: false, error: `Phase ${phaseId} spot ${spotId}: rungs.reference_md must be a string` };
+          }
+          if (typeof r['auto_write_md'] !== 'string') {
+            return { ok: false, error: `Phase ${phaseId} spot ${spotId}: rungs.auto_write_md must be a string` };
+          }
+          spotData.rungs = {
+            hint_md: r['hint_md'] as string,
+            reference_md: r['reference_md'] as string,
+            auto_write_md: r['auto_write_md'] as string,
+          };
+        }
+
+        if (s['doc_links'] !== undefined) {
+          if (!Array.isArray(s['doc_links'])) {
+            return { ok: false, error: `Phase ${phaseId} spot ${spotId}: doc_links must be an array` };
+          }
+          spotData.doc_links = s['doc_links'] as string[];
+        }
+      }
+      // else: stub spot — just id + title, no new fields required
+
+      validatedSpots.push(spotData);
+    }
+
+    const phaseData: PhaseData = {
+      id: phaseId,
+      spots: validatedSpots,
+    };
+    if (typeof p['title'] === 'string') phaseData.title = p['title'] as string;
+    if (typeof p['explainer_md'] === 'string') phaseData.explainer_md = p['explainer_md'] as string;
+
+    validatedPhases.push(phaseData);
+  }
+
+  return {
+    ok: true,
+    value: { phases: validatedPhases },
+  };
+}

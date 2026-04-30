@@ -1,0 +1,41 @@
+[
+  {
+    "id": "R6-001",
+    "title": "E-012 malformed path.json passes structurally; sibling preserved, no crash",
+    "severity": "info",
+    "category": "e2e-flow",
+    "file": "mcp/server/src/registry.ts",
+    "line_range": "84-93",
+    "description": "Synthesized /tmp/forge_e012/paths/{01-orderbook-viewer, 99-broken/path.json='{ not-json'} and invoked scanRegistry. Result: paths = ['01-orderbook-viewer'] (well-formed sibling preserved); warnings = exactly one entry with kind='malformed-path-json' whose .path field references the broken slug ('/tmp/forge_e012/paths/99-broken/path.json'). No exception thrown. Scenario E-012 covers AC-3.2 and continues to pass on the discriminator contract that consumers actually branch on. Verified registry.test.ts T-021/T-022 (28/28 green).",
+    "impact": "None. E-012 acceptance criterion AC-3.2 is met at the structural level the harness asserts.",
+    "recommendation": "No action. Round-1 already filed the literal-wording divergence (warning says 'Failed to parse <abs path>: <detail>' rather than scenario prose 'skipped paths/99-broken/path.json: parse error') as low; cycle 6 did not scope it and it remains below remediation threshold.",
+    "evidence": "kind: 'malformed-path-json',\n        message: `Failed to parse ${pathJsonFile}: ${err instanceof Error ? err.message : String(err)}`,\n        path: pathJsonFile,",
+    "confidence": "high"
+  },
+  {
+    "id": "R6-002",
+    "title": "E-013 empty paths/ dir passes structurally; warning emitted, no crash",
+    "severity": "info",
+    "category": "e2e-flow",
+    "file": "mcp/server/src/registry.ts",
+    "line_range": "41-51",
+    "description": "Synthesized empty /tmp/forge_e013/paths/ and invoked scanRegistry. Result: paths = []; warnings = exactly one entry with kind='empty-paths-dir', message='Paths directory exists but contains no path subdirectories: /tmp/forge_e013/paths'. No exception thrown, no path-selection prompt would be rendered (start.ts paths array is empty). Scenario E-013 covers AC-3.3 and continues to pass on the discriminator contract. Verified registry.test.ts T-024 (green).",
+    "impact": "None. E-013 acceptance criterion AC-3.3 is met at the structural level the harness asserts.",
+    "recommendation": "No action. Round-1 already filed the literal-wording divergence (warning lacks the literal 'no paths installed' phrase from the scenario prose) as low; cycle 6 did not scope it and it remains below remediation threshold.",
+    "evidence": "kind: 'empty-paths-dir',\n          message: `Paths directory exists but contains no path subdirectories: ${scanRoot}`,",
+    "confidence": "high"
+  },
+  {
+    "id": "R6-003",
+    "title": "Cycle-6 path-traversal containment intact for hint reads (no regression)",
+    "severity": "info",
+    "category": "security",
+    "file": "mcp/server/src/tools/requestHint.ts",
+    "line_range": "187-215",
+    "description": "Cross-checked the path-traversal containment claim from cycle 5 round 2 against cycle 6's new content packs (paths/01-orderbook-viewer/rungs/{p2-spot-1,p3-spot-1}/*, phases/{p2,p3}.md). requestHint resolves the rung markdown payload via `containedPath(slugContentRoot, rungRelPath)` where slugContentRoot = projectRoot/paths/<slug>, for all three rung kinds (hint_md / reference_md / auto_write_md), with an explicit PathTraversalError → auto-write-failed branch. Cycle 6 did NOT join paths raw; it preserved the C012 fix. Verified requestHint.test.ts (55/55 green).",
+    "impact": "None — security posture is preserved across cycle 6. No critical regression to flag.",
+    "recommendation": "No action.",
+    "evidence": "const slugContentRoot = path.join(projectRoot, 'paths', slug);\n  let rungContentPath: string;\n  try {\n    if (rungRelPath) {\n      rungContentPath = containedPath(slugContentRoot, rungRelPath);\n    } else {\n      // Fallback to canonical structure if spot.rungs not declared\n      rungContentPath = containedPath(slugContentRoot, path.join('rungs', spot.id, rungFile));\n    }",
+    "confidence": "high"
+  }
+]

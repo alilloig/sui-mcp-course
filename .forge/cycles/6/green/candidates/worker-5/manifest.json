@@ -1,0 +1,31 @@
+{
+  "worker": 5,
+  "target_files": [
+    "paths/01-orderbook-viewer/phases.json",
+    "paths/01-orderbook-viewer/rungs/p2-spot-1/hint.md",
+    "paths/01-orderbook-viewer/rungs/p2-spot-1/reference.md",
+    "paths/01-orderbook-viewer/rungs/p2-spot-1/auto.md",
+    "paths/01-orderbook-viewer/rungs/p3-spot-1/hint.md",
+    "paths/01-orderbook-viewer/rungs/p3-spot-1/reference.md",
+    "paths/01-orderbook-viewer/rungs/p3-spot-1/auto.md",
+    "paths/01-orderbook-viewer/phases/p2.md",
+    "paths/01-orderbook-viewer/phases/p3.md",
+    "mcp/server/src/outputStyle.ts",
+    "mcp/server/src/state.ts",
+    "mcp/server/src/tools/selectPath.ts",
+    "mcp/server/src/tools/runPreflightProbe.ts",
+    ".forge/e2e/scenarios.json",
+    "scripts/cycle-e2e-pass.sh"
+  ],
+  "lines_changed": 187,
+  "blocked": false,
+  "tests_pass": null,
+  "notes": [
+    "H001: phases.json renamed p2-polling→p2-retry (target_range 103-114), p3-display→p3-poll (target_range 116-145); p3-spot-1 prompt contains {{ poll_interval_ms }}; rungs/p2-spot-1/ and rungs/p3-spot-1/ packs created; phases/p2.md and phases/p3.md created; verification modes are compile (p2) and simulate (p3) matching spec.",
+    "H002: outputStyle.ts both bare {ok:false} branches now return {ok:false, warning:{kind:'output-style-plugin-not-enabled', message:'...learning-output-style@claude-plugins-official...claude plugins enable learning-output-style@claude-plugins-official...'}}. Shared constant PLUGIN_NOT_ENABLED_WARNING avoids duplication.",
+    "H003: state.ts adds archiveDedupeCache (SHA-256 keyed Map) so repeated loadState calls on identical corrupt bytes only write one archive file. selectPath.ts treats corrupt+archivedTo as absent and falls through to mint a fresh state via saveState. start.ts needs no changes (dedup is in archiveCorruptFile).",
+    "H004: runPreflightProbe.ts accepts probeOpts: Partial<Record<ProbeId, ProbeOptions>> in args; threads it via (pid) => runProbe(pid, probeOpts[pid] ?? {}) into both the initial probe call and runDeployRemediation's precondition checker.",
+    "H005: scenarios.json E-008 preconditions array expanded to 5 entries with 'Sui CLI in 1.63.2–1.64.1 (harness skips...)'. scripts/cycle-e2e-pass.sh created with docker + sui-cli-version range checks; emits structured [SKIP] record with 'sui' in reason when out of range; exits 0 always.",
+    "AC-4.2/H001-followon: ladder reachability is automatic — with p2-retry declared in phases.json, advanceCursor from p1-spot-1 returns p2-retry/p2-spot-1, and rungs/p2-spot-1/hint.md is loadable."
+  ]
+}

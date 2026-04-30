@@ -1,0 +1,62 @@
+{
+  "phases": [
+    {
+      "id": "p1-bootstrap",
+      "title": "Phase 1: Wire the SDK Configuration",
+      "explainer_md": "phases/p1-bootstrap.md",
+      "spots": [
+        {
+          "id": "p1-spot-1",
+          "target_file": "src/App.tsx",
+          "target_range": "39-58",
+          "prompt": "Implement the three helper functions — packageIds, coinMap, and poolMap — that convert the faucet manifest into the DeepBook SDK's expected shapes. Wire {{ pool_subset }} pools only. Each function reads from the manifest object and must return the correct typed value for the SDK client constructor.",
+          "rungs": {
+            "hint_md": "rungs/p1-spot-1/hint.md",
+            "reference_md": "rungs/p1-spot-1/reference.md",
+            "auto_write_md": "rungs/p1-spot-1/auto.md"
+          },
+          "doc_links": [
+            ".sui-docs/develop/transactions/ptbs/inputs-and-results.mdx",
+            ".ts-sdk-docs/sui/clients/grpc.mdx"
+          ],
+          "verification": {
+            "mode": "compile",
+            "command": "pnpm build"
+          }
+        }
+      ]
+    },
+    {
+      "id": "p2-sdk-client",
+      "title": "Phase 2: Build the SDK Client",
+      "spots": [
+        {
+          "id": "p2-spot-1",
+          "target_file": "src/App.tsx",
+          "target_range": "103-114",
+          "prompt": "TBD in cycle 5+ — wire the SuiGrpcClient and DeepBook extension with the manifest-derived config.",
+          "verification": {
+            "mode": "compile",
+            "command": "pnpm build"
+          }
+        }
+      ]
+    },
+    {
+      "id": "p3-poll-loop",
+      "title": "Phase 3: Poll the Order Book",
+      "spots": [
+        {
+          "id": "p3-spot-1",
+          "target_file": "src/App.tsx",
+          "target_range": "116-145",
+          "prompt": "TBD in cycle 5+ — implement the polling loop using the DeepBook client's midPrice and getLevel2TicksFromMid methods.",
+          "verification": {
+            "mode": "compile",
+            "command": "pnpm build"
+          }
+        }
+      ]
+    }
+  ]
+}

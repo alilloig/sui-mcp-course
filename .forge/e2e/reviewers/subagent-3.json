@@ -1,0 +1,41 @@
+[
+  {
+    "id": "R3-001",
+    "title": "E-006 corrupt-state recovery: selectPath mints fresh state and archives dedup to 1",
+    "severity": "info",
+    "category": "e2e-flow",
+    "file": "mcp/server/src/tools/selectPath.ts",
+    "line_range": "82-95",
+    "description": "Round-2 verification of E-006 against the live cycle-6 code. Seeded `<projectRoot>/.sui-deepbook-course/state.json` with bytes `not-valid-json{`. Drove `runStart` then `runSelectPath({slug:'01-orderbook-viewer'})` through the production code paths. The selectPath result was `{ok:true}` (the round-1 wedge is gone — the `corrupt + archivedTo` branch now falls through to the absent-equivalent path). After the call, `state.json` parsed as valid JSON with `schema_version===1`, `selected_path==='01-orderbook-viewer'`, and `cursor==={phase_id:'p1-bootstrap', spot_id:'p1-spot-1'}`. Then re-seeded identical corrupt bytes and called `runStart` three more times back-to-back; `glob('.sui-deepbook-course/state.corrupt-*.json').length === 1` (NOT 3). The content-hash dedup in `findExistingArchive` (state.ts:122-144) kicks in on the second and third call and returns the existing archive path instead of creating new files.",
+    "impact": "AC-7.2 (corrupt-state recovery) now holds end-to-end. The round-1 HIGH wedge — student stuck forever, /start retries leaking N archives — is closed. Returning users with a corrupted state.json can now successfully recover by re-running /start + selectPath without manual filesystem cleanup.",
+    "recommendation": "No action — the H003 fix lands correctly. (Minor future hardening note for the consolidator: archiveCounter is process-local, so two cold processes hitting the same millisecond on different bytes would collide on filename. Cycle-6 sidesteps this with the wx flag, which would error rather than corrupt. Out of scope for E-006.)",
+    "evidence": "selectPath.ts:88 — `if (stateResult.archivedTo === undefined) { return { ok: false, ... } } // archivedTo is set — proceed as if the slot is absent (fall through)`; state.ts:156-159 — `const existingPath = await findExistingArchive(stateDir, content); if (existingPath !== null) { return existingPath; }`. Scenario E-006 exercised end-to-end through runStart + runSelectPath; archives.length asserted === 1 after 3 starts on identical corrupt bytes.",
+    "confidence": "high"
+  },
+  {
+    "id": "R3-002",
+    "title": "E-016 schema-version mismatch is a clean guided stop, no archive, no state rewrite",
+    "severity": "info",
+    "category": "e2e-flow",
+    "file": "mcp/server/src/state.ts",
+    "line_range": "65-71",
+    "description": "Round-2 verification of E-016 against the live cycle-6 code. Seeded `state.json` with a JSON-valid object whose `schema_version: 999`. Called `runStart({projectRoot})`. Result: `outputStyleOk===true`, `state===null`, and `warnings` contained an entry with `kind:'state-schema-mismatch'` and `foundVersion:999`. The state-corruption path was NOT taken (the `state.corrupt-*.json` archive was NOT emitted). The on-disk `state.json` bytes were preserved verbatim (byte-equal to the seeded payload). This matches scenario E-016's `expected: \"An unknown schema version is a guided stop, distinct from the corruption recovery path.\"` Confirms AC-7.3 is correctly distinguished from AC-7.2.",
+    "impact": "AC-7.3 (incompatible schema → guided stop) is met. The clean separation between schema-mismatch and corruption is load-bearing for migration safety: users with an older or future schema version see a manual-migration message rather than having their state silently archived and discarded.",
+    "recommendation": "No action — the schema-mismatch path is correctly distinct from the corruption path. The warning shape (kind + foundVersion + message) is sufficient for the skill layer to render guided remediation.",
+    "evidence": "state.ts:65-71 — `if (foundVersion !== STATE_SCHEMA_VERSION) { return { kind: 'schema-mismatch', foundVersion, message: ... }; }`. Note: this branch returns BEFORE the corrupt-archive helper runs, so no archive is written. Scenario E-016 exercised: result.warnings included `{kind:'state-schema-mismatch', foundVersion:999, message:...}`, listArchives(projectRoot).length === 0, and on-disk bytes matched seeded bytes.",
+    "confidence": "high"
+  },
+  {
+    "id": "R3-003",
+    "title": "E-004 ladder traversal: rung 1->2->3 flips all four flags and advances cursor to p2-retry/p2-spot-1",
+    "severity": "info",
+    "category": "e2e-flow",
+    "file": "tests/cycle6.ladder.test.ts",
+    "line_range": "89-189",
+    "description": "Round-2 verification of E-004's ladder protocol + post-rung-3 cursor advance against the live MCP harness. Booted bootHarness with a temp project root containing the production paths/01-orderbook-viewer/ tree, seeded src/App.tsx with 200 lines so rung-3 has a target file. Drove start -> selectPath -> setPersonalization(defaults) -> nextSpot (cursor at p1-bootstrap/p1-spot-1). With verify stub set to fail, called requestHint(rung=1) and requestHint(rung=2); both returned ok:true with non-empty payloads. Switched verify stub to pass, called requestHint(rung=3); response had ok:true, autoVerifyResult.pass:true, autoVerifyResult.advanced:true. After the rung-3 advance, inspected the persisted state.ladder['p1-spot-1']: `hint_used===true`, `reference_shown===true`, `auto_completed===true`, `auto_write_attempted===true`. Then called nextSpot a second time; result was `{done:false, phase.id:'p2-retry', spot.id:'p2-spot-1'}` (NOT `done:true`, NOT `p2-polling`). Round-1 H001 (manifest used `p2-polling`/`p3-display`) is fixed; the ladder protocol now traverses end-to-end and the cursor advances correctly.",
+    "impact": "AC-4.2 (post-rung-3 cursor advance), AC-5.1/5.2/5.3/5.4 (ladder rung semantics) are all met end-to-end. The round-1 MEDIUM coverage gap (`p2-retry` unreachable via the manifest) is closed. The full E-004 happy path is now reachable; only the trailing p2-retry-failure-feeds-the-ladder clause depends on additional rung content packs (already shipped per T-305).",
+    "recommendation": "No action — ladder traversal and cursor advance are correct. (Note for future cycles: T-315 in cycle 6 already asserts the same shape; the cycle-6 test suite + this round-2 e2e check are mutually reinforcing.)",
+    "evidence": "Live MCP harness drive of scenario E-004: parse(callTool('nextSpot')) after rung-3 returned `{done:false, phase:{id:'p2-retry'}, spot:{id:'p2-spot-1'}}`. State.ladder['p1-spot-1'] flags all four === true. requestHint at the new p2-retry cursor returned a non-empty payload, proving rungs/p2-spot-1/hint.md is loadable.",
+    "confidence": "high"
+  }
+]

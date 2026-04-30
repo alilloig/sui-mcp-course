@@ -1,0 +1,93 @@
+[
+  {
+    "id": "R6-001",
+    "title": "verify.ts re-introduces module-level mutable spawn-test seam (M005 anti-pattern)",
+    "severity": "high",
+    "category": "security",
+    "file": "mcp/server/src/verify.ts",
+    "line_range": "35-52",
+    "description": "verify.ts exports `setVerifyOverride(fn)` which mutates a module-level `let _verifyOverride: VerifyOverrideFn | undefined`. Any code that imports the production `verify.js` module surface can install a global override that intercepts every subsequent `runVerification` call across the entire process — exactly the global-mutable production-import-surface anti-pattern that A13 (M005 carry-forward) explicitly removed from preflight.ts in this same cycle. The harness comment at scripts/e2e/harness.ts:164-165 even acknowledges the parallel: `the module-level test seam for the compile adapter, parallel to the preflight pattern pre-M005`. The contract specified the spawn-injection seam as `opts.spawn?: SpawnFn` (parallel to ProbeOptions.spawn) — see contract.md line 16: `Spawn injection seam parallels the probe pattern (opts.spawn?: SpawnFn)`. Per-call injection is implemented (verify.ts:74) AND a global override is also exported; only the latter was specified.",
+    "impact": "Any caller that imports verify.js (test, harness, or — in a hostile scenario — a third-party module loaded into the same process) can hijack ALL subsequent verification dispatches process-wide and either bypass the compile adapter (always return pass) or exfiltrate the spec/projectRoot it receives. The seam is on the production import surface (`export function setVerifyOverride`), not gated behind a test-only build. The same threat model that motivated removing setSpawnOverride from preflight.ts applies here verbatim.",
+    "recommendation": "Delete `setVerifyOverride` and `_verifyOverride` from verify.ts (lines 35-67 of the override path). Migrate the harness's `withVerifyStub` fixture to install the stub via `opts.spawn` at the call site (the verify-spot tool would need a thin per-call options pass-through equivalent to the probe pattern), or via a harness-internal map keyed on a probe-id-equivalent. Re-assert A13's intent on the new verification surface.",
+    "evidence": "let _verifyOverride: VerifyOverrideFn | undefined;\n\nexport function setVerifyOverride(fn: VerifyOverrideFn): () => void {\n  _verifyOverride = fn;",
+    "confidence": "high"
+  },
+  {
+    "id": "R6-002",
+    "title": "compile adapter naive whitespace split mishandles quoted command args",
+    "severity": "low",
+    "category": "security",
+    "file": "mcp/server/src/verify.ts",
+    "line_range": "69-72",
+    "description": "The compile adapter splits `adapter.command` with `command.split(' ')` and uses `parts[0]` as the executable + `parts.slice(1)` as args. This handles `'pnpm build'` correctly but breaks for any command containing quoted whitespace: `pnpm run \"build hard\"` becomes `['pnpm', 'run', '\"build', 'hard\"']` (literal quote chars in argv). It also collapses to ENOENT for any command authored with shell metacharacters — `'pnpm build && echo done'` becomes argv `['pnpm', 'build', '&&', 'echo', 'done']` which `pnpm` will see as bad args, not as a shell pipeline. spawnSync is invoked WITHOUT `shell: true`, so this is NOT a shell-injection vulnerability (good), but it is a brittle parser that silently breaks on any non-trivial command authored in phases.json. Curriculum authors would see misleading ENOENT/exit-1 with no diagnostic.",
+    "impact": "Curriculum authors who write any command beyond simple `argv0 arg1 arg2` see silent breakage. No exploitable security consequence (the no-shell stance is correct), but the parsing strategy is fragile and the surface area for future curriculum authors is misleading. Belongs to category=security because the alternative (shell:true) would be a CRITICAL injection vector — the hardening choice deserves explicit documentation.",
+    "recommendation": "Either (a) document the constraint explicitly in the schema — `verification.command` must be whitespace-separated argv with no quoting/metacharacters — and reject offending commands at validatePhases time, or (b) accept `command` as a `string[]` (argv array) in the schema so curriculum authors don't have to parse-by-convention, or (c) use a real shell-words parser like `string-argv`. Do NOT add `shell: true` to spawnSync.",
+    "evidence": "const parts = adapter.command.split(' ');\nconst cmd = parts[0];\nconst args = parts.slice(1);",
+    "confidence": "high"
+  },
+  {
+    "id": "R6-003",
+    "title": "loadPhases performs no slug sanitization; arbitrary file-read via state.selected_path",
+    "severity": "low",
+    "category": "security",
+    "file": "mcp/server/src/phaseEngine.ts",
+    "line_range": "25-26",
+    "description": "loadPhases(projectRoot, slug) builds the path with `path.join(projectRoot, 'paths', slug, 'phases.json')` and performs no sanitization on `slug`. With `slug='../../etc'`, `path.join` resolves to `/etc/phases.json` (traversing outside projectRoot/paths). selectPath validates slug against the registry-scanned list before calling loadPhases (selectPath.ts:86), but nextSpot and verifySpot read `slug` from `state.selected_path` (nextSpot.ts:65, verifySpot.ts:31) and pass it to loadPhases with no re-validation. A user (or attacker who can write the state file) who places `../../etc` into state.selected_path triggers an arbitrary fs.readFile of an attacker-chosen path. The contents are then JSON-parsed — a parse failure surfaces as a LoadPhasesError, but parse-success leaks file shape info via the validatePhases error message in the tool response.",
+    "impact": "In the trust model where projectRoot is the user's own dev environment, this is a self-attack surface (the attacker is the user who already controls state.json). Not a privilege escalation. Defense-in-depth concern only. Worth flagging because the sanitization cost is one line and removes the entire class of state-tampering vectors.",
+    "recommendation": "In loadPhases, reject slugs containing `..`, `/`, `\\`, or null bytes before calling path.join. Equivalent: `if (!/^[a-zA-Z0-9_-]+$/.test(slug)) throw new LoadPhasesError(slug, 'invalid slug format');`. Apply the same guard at the entry of nextSpot/verifySpot before reading state, OR in setPersonalization at line 36 where state.selected_path is also passed to path.join unchecked.",
+    "evidence": "export async function loadPhases(projectRoot: string, slug: string): Promise<PhasesData> {\n  const phasesPath = path.join(projectRoot, 'paths', slug, 'phases.json');",
+    "confidence": "high"
+  },
+  {
+    "id": "R6-004",
+    "title": "selectPath/setPersonalization/nextSpot/verifySpot have no outputStyleOk gate",
+    "severity": "low",
+    "category": "security",
+    "file": "mcp/server/src/tools/selectPath.ts",
+    "line_range": "75-129",
+    "description": "AC-1.3's load-bearing invariant is `start` performing zero state writes when `outputStyleOk === false`. The contract (line 11) extends this protection to the new tools by ASSERTION ONLY: 'selectPath, setPersonalization, nextSpot, verifySpot are reachable only after start returned outputStyleOk: true'. There is no programmatic enforcement: selectPath unconditionally calls saveState (line 129) regardless of output-style state; the same is true for setPersonalization (line 104) and verifySpot (line 63). A misbehaving skill, an out-of-spec MCP client, or an attacker calling tools out-of-order through the in-memory transport can write state even when outputStyleOk would have failed. The 'continues to hold' language in contract A11(c) relies on protocol discipline, not code.",
+    "impact": "Defense-in-depth concern. AC-1.3 was originally specified to keep state pristine before the learning-output-style guard fired (so the user could install the style and re-start without inheriting half-written state). The new tools bypass that invariant if called out-of-order. The current MCP transport accepts any tool call at any time — there's no FSM. Severity is LOW because the contract explicitly accepts the protocol-only enforcement, but a future cycle that adds an FSM gate at the tool-handler layer would close the gap.",
+    "recommendation": "Add a startup-precondition check at the top of each new tool: read the output-style probe synchronously (cheap, no IO beyond an env-var read in the existing probeOutputStyle helper) and short-circuit with `{ ok: false, errors: ['Output style not enabled. Re-run start.'] }` when it fails. Alternatively, add a tiny FSM seam in state.ts that records `state.start_completed: true` and have each new tool refuse without it.",
+    "evidence": "// Load state — short-circuit on corrupt/schema-mismatch\nconst stateResult = await loadState(projectRoot);\n// ... no outputStyleOk check ...\nawait saveState(projectRoot, newState);",
+    "confidence": "medium"
+  },
+  {
+    "id": "R6-005",
+    "title": "nextSpot returns full verification block including command verbatim to client",
+    "severity": "info",
+    "category": "security",
+    "file": "mcp/server/src/tools/nextSpot.ts",
+    "line_range": "108",
+    "description": "nextSpot's response copies `spot.verification` verbatim into the SpotView (line 108: `verification: spot.verification`). The verification block contains the literal `command` (or `endpoint`) string from phases.json. A1/A3 do require target_file/target_range/verification to be returned byte-for-byte, but the SpotView is then JSON-serialized and shipped to the LLM client (index.ts:118 `text: JSON.stringify(result)`). If a future curriculum places sensitive data in verification.command (unlikely, but possible — e.g. tokens passed via env), it surfaces in the assistant's context. Not an exploitable vulnerability — phases.json is curriculum-authored — but worth noting that the assistant sees the literal command string and can be social-engineered into echoing it.",
+    "impact": "Information disclosure boundary: the assistant receives every verification.command verbatim. Curriculum authors should avoid placing secrets in verification.command. No current exposure; flagged for future authors.",
+    "recommendation": "Document in the curriculum-authoring guide (when written) that verification.command and verification.endpoint are part of the LLM's visible context. Optionally, redact verification.command from the nextSpot response if there's no reason for the LLM to see the build command — verifySpot can read it independently from the manifest.",
+    "evidence": "verification: spot.verification,      // byte-for-byte from manifest",
+    "confidence": "low"
+  },
+  {
+    "id": "R6-006",
+    "title": "substitutePromptOnly's hasOwnProperty guard is correct against prototype pollution",
+    "severity": "info",
+    "category": "security",
+    "file": "mcp/server/src/personalization.ts",
+    "line_range": "133-138",
+    "description": "Positive observation: `substitutePromptOnly` correctly uses `Object.prototype.hasOwnProperty.call(values, key)` rather than `key in values` or `values[key] !== undefined`. The placeholder-key regex `[a-zA-Z_][a-zA-Z0-9_]*` does match identifiers like `__proto__` and `constructor`, but the hasOwnProperty.call guard ensures only own-properties of `values` are read. Combined with `validatePersonalizationValues` rejecting unknown keys (personalization.ts:75-79) before save, the `state.personalization` map cannot contain `__proto__` as an own-property in normal flow. Even if a tampered state.json injected `__proto__` as own-property, the substitution would safely emit `String(values.__proto__)` rather than reading from `Object.prototype`. AC-6.3 substitution scope is also met: zero {{...}} usage outside personalization.ts in engine code (verified via grep across mcp/server/src/**/*.ts).",
+    "impact": "None (positive finding). The substitution function is robust against prototype-pollution-flavored attacks.",
+    "recommendation": "No action. Worth retaining the hasOwnProperty.call guard against future refactors that might 'simplify' to `key in values`.",
+    "evidence": "if (Object.prototype.hasOwnProperty.call(values, key)) {\n  return String(values[key]);\n}",
+    "confidence": "high"
+  },
+  {
+    "id": "R6-007",
+    "title": "AC-1.3 / A11 / A12 / A21 invariants hold in cycle-4 engine code",
+    "severity": "info",
+    "category": "security",
+    "file": "mcp/server/src/tools/start.ts",
+    "line_range": "24-36",
+    "description": "Positive observation: cycle-4 carry-forward invariants validate via grep. (a) A11(a): `kind: 'shell'` literal exists ONLY in mcp/server/src/tools/runPreflightProbe.ts:14; the four new tool files have zero matches. (b) A11(b)/A21: literal `01-orderbook-viewer` matches zero files in mcp/server/src/. (c) A11(c)/AC-1.3: start.ts:24-36 returns immediately without calling loadState or saveState when `!styleResult.ok` — the early-return path includes only the registry scan (read-only) and the warning unshift; no fs writes. The four new tools are not reached on this path because the MCP server returns from start with the empty paths/warnings payload and the skill is supposed to halt per the protocol. (d) A13: literal `setSpawnOverride` matches zero files in mcp/server/src/; preflight.ts uses per-call ProbeOptions.spawn only. NOTE that A13's intent is partially undermined by R6-001 (verify.ts re-introduces a parallel global mutable seam under a different name).",
+    "impact": "None (positive finding). The grep-based invariants from the contract pass.",
+    "recommendation": "No action on these specific invariants. See R6-001 for the parallel-anti-pattern violation that A13's spirit (not letter) misses.",
+    "evidence": "if (!styleResult.ok) {\n    const warnings: (RegistryWarning | StateWarning)[] = [...registry.warnings];\n    if (styleResult.warning) {\n      warnings.unshift(styleResult.warning as StateWarning);\n    }\n    return {\n      outputStyleOk: false,",
+    "confidence": "high"
+  }
+]

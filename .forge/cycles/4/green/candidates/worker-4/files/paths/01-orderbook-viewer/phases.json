@@ -1,0 +1,65 @@
+{
+  "phases": [
+    {
+      "id": "p1-bootstrap",
+      "title": "Phase 1 — Manifest → SDK Config",
+      "explainer_md": "phases/p1-bootstrap.md",
+      "spots": [
+        {
+          "id": "p1-spot-1",
+          "title": "Wire the deployment manifest to the DeepBook SDK client",
+          "target_file": "src/App.tsx",
+          "target_range": "39-58",
+          "prompt": "The deployment manifest has been fetched. Now you need to wire it into the DeepBook SDK client.\n\nYour task: implement the three helper functions (`packageIds`, `coinMap`, `poolMap`) that extract the SDK configuration from the manifest, then build the `SuiGrpcClient` and attach the `deepbook` extension.\n\nYou are configuring for pool: {{ pool_subset }}.\n\nLines 39–58 of `src/App.tsx` are the target. Use `packageIds(manifest)`, `coinMap(manifest)`, and `poolMap(manifest)` as arguments to the `deepbook(...)` call.",
+          "verification": {
+            "mode": "compile",
+            "command": "pnpm build"
+          },
+          "rungs": {
+            "hint_md": "rungs/p1-spot-1/hint.md",
+            "reference_md": "rungs/p1-spot-1/reference.md",
+            "auto_write_md": "rungs/p1-spot-1/auto.md"
+          },
+          "doc_links": [
+            ".sui-docs/develop/transactions/ptbs/inputs-and-results.mdx",
+            ".ts-sdk-docs/sui/clients/grpc.mdx"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "p2-polling",
+      "title": "Phase 2 — Order Book Polling",
+      "spots": [
+        {
+          "id": "p2-spot-1",
+          "title": "TBD in cycle 5+",
+          "target_file": "src/App.tsx",
+          "target_range": "1-1",
+          "prompt": "TBD in cycle 5+: Implement the polling loop that fetches mid price and level 2 ticks from the DeepBook SDK.",
+          "verification": {
+            "mode": "compile",
+            "command": "pnpm build"
+          }
+        }
+      ]
+    },
+    {
+      "id": "p3-display",
+      "title": "Phase 3 — Display",
+      "spots": [
+        {
+          "id": "p3-spot-1",
+          "title": "TBD in cycle 5+",
+          "target_file": "src/App.tsx",
+          "target_range": "1-1",
+          "prompt": "TBD in cycle 5+: Render the order book data in the UI component.",
+          "verification": {
+            "mode": "compile",
+            "command": "pnpm build"
+          }
+        }
+      ]
+    }
+  ]
+}

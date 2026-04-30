@@ -1,0 +1,14 @@
+{
+  "worker": 5,
+  "target_files": [
+    "mcp/server/src/state.ts",
+    "mcp/server/src/schemas/state.ts",
+    "mcp/server/src/tools/start.ts",
+    "mcp/server/src/index.ts",
+    "scripts/e2e/harness.ts",
+    "mcp/server/package.json"
+  ],
+  "lines_changed": 341,
+  "blocked": false,
+  "notes": "state.ts uses fsPromises.readFile for async I/O, monotonic counter to disambiguate same-millisecond archives, no bare catch{} blocks. saveState uses writeFile->fsyncSync->rename ordering. index.ts guards stdio connection with isMainModule() check to avoid side-effects when imported as a library. harness.ts uses InMemoryTransport.createLinkedPair() + SDK Client — no runStart import, no per-tool if-branch. registry.ts unchanged (minimum-touch)."
+}

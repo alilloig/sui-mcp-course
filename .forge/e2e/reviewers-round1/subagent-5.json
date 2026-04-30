@@ -1,0 +1,80 @@
+[
+  {
+    "id": "R5-001",
+    "title": "E-009 sandbox-repo-present probe passes scenario assertion",
+    "severity": "info",
+    "category": "e2e-flow",
+    "file": "mcp/server/src/probes/sandboxRepo.ts",
+    "line_range": "9-28",
+    "description": "Scenario E-009 requires the probe to fail with an exact clone command when ~/workspace/deepbook-sandbox is absent. Walking the harness path: bootHarness -> runPreflightProbe('sandbox-repo-present', {}) -> runProbe -> probeSandboxRepoPresent. The probe calls os.homedir() (which honors process.env.HOME on macOS, confirmed via `node -e \"process.env.HOME='/tmp/fake'; console.log(require('os').homedir())\"` => /tmp/fake), stats `${HOME}/workspace/deepbook-sandbox`, catches ENOENT, and returns `pass: false` with the message `Sandbox repo not found. Clone it with: git clone --recurse-submodules https://github.com/MystenLabs/deepbook-sandbox.git ~/workspace/deepbook-sandbox`. The exact substring required by E-009 step 3 (`git clone --recurse-submodules https://github.com/MystenLabs/deepbook-sandbox.git ~/workspace/deepbook-sandbox`) is contained verbatim. Existing test T-158 in tests/harness.preflight.test.ts confirms this end-to-end (1 passed). Engine halts before deploy: the probe produces no `action` field, so when E-009 walks the docker-#7 sequence the precondition gate in runDeployRemediation refuses to spawn pnpm deploy-all (verified by spawnSpy assertion in T-158).",
+    "impact": "Scenario E-009 (AC-2.2) is covered by production probe + existing test. No remediation required for this scenario itself — but see R5-004 for a fixture concern that affects external scenario runners.",
+    "recommendation": "Accept E-009 as passing for the e2e gate. Reference scenario id E-009 in the cycle-e2e-pass.sh greppable output.",
+    "evidence": "Sandbox repo not found. Clone it with: ${CLONE_COMMAND}",
+    "confidence": "high"
+  },
+  {
+    "id": "R5-002",
+    "title": "E-010 precondition gate leaks unstubbed probes; docker-fail short-circuit assertion fails on stock host",
+    "severity": "high",
+    "category": "e2e-flow",
+    "file": "mcp/server/src/tools/runPreflightProbe.ts",
+    "line_range": "54-57",
+    "description": "Scenario E-010 (AC-2.4) requires that a Docker-not-running condition short-circuits any deploy attempt. The dispatch prompt explicitly cites cycle-3 A13 (\"Docker fail short-circuits remediation\"). Walking the harness: harness.withDockerStub({exitCode:1}) installs a SpawnFn into probeSpawnStubs.get('docker-running'); harness.callTool('runPreflightProbe', {probeId:'sandbox-manifest-reachable', remediate:true}) is then invoked to assert that remediation refuses. Inside runPreflightProbe, the manifest probe fails (real fetch), runDeployRemediation is invoked with a precondition checker `(pid) => runProbe(pid as ProbeId, {})` — passing an EMPTY ProbeOptions object, no spawn stub. So when runDeployRemediation iterates ['docker-running','sui-cli-version','sandbox-repo-present'] and calls the checker for 'docker-running', the production docker probe runs against the host's real `docker info`. On a developer machine with Docker installed and running, that probe returns pass:true, the gate continues to sui-cli-version, and the warning surfaces the WRONG probe id. Live test run confirms: `tests/harness.preflight.test.ts > E-010 > T-159` fails with `expected '...probeId\":\"sui-cli-version\"...' to contain 'docker-running'`. The harness-side stub never reaches the precondition gate — pnpm deploy-all is still NOT spawned (spawnSpy passes), but the assertion that it was the docker probe that blocked it is unprovable through this code path.",
+    "impact": "AC-2.4's assertion that Docker failure is the cause of the deploy short-circuit is not testable through the current harness/production wiring — the precondition gate runs unstubbed probes against the real host. On any developer machine where Docker is available the test produces a false-positive deploy-blocked-but-for-the-wrong-reason. The scenario E-010 cannot reliably distinguish \"Docker fail short-circuited remediation\" from \"some other precondition happened to fail\". Cycle-3 A13's claim is structurally unverifiable without a fix.",
+    "recommendation": "Thread harness probe stubs into the precondition checker. One option: change runPreflightProbe.ts:55-57 to accept and forward a checkPrecondition callback override (or ProbeOptions-bearing variant) so the harness can inject the same stub map used for the top-level call. Alternatively, runDeployRemediation should accept an opts.spawnByProbe map and runPreflightProbe should construct that map from the same source the harness uses. Until then E-010's `expect(JSON.stringify(r7.warning)).toContain('docker-running')` (line 473) will fail on any host with Docker running.",
+    "evidence": "const deployResult = await runDeployRemediation(\n    probeResult.action,\n    (pid) => runProbe(pid as ProbeId, {}),\n  );",
+    "confidence": "high"
+  },
+  {
+    "id": "R5-003",
+    "title": "E-011 sui-cli-version probe message diverges from spec scenario substring",
+    "severity": "medium",
+    "category": "e2e-flow",
+    "file": "mcp/server/src/probes/suiCli.ts",
+    "line_range": "47-50",
+    "description": "Scenario E-011 (`.forge/e2e/scenarios.json` line 269) asserts the failure message contains the exact substring `\"Sui CLI 1.62.0 is outside the supported range\"`. The production probe instead emits `Sui CLI version 1.62.0 is outside the supported range (1.63.2–1.64.1). Run: brew install sui` — note the inserted word `version` between `Sui CLI` and the version number. The literal substring requested by the scenario does not appear in the message. The dispatch prompt asks me to drive `withSuiCliStub({version: '1.50.0'})`; the same wording diff applies (`Sui CLI version 1.50.0 ...`). The existing test T-160 (`tests/harness.preflight.test.ts:517`) only asserts `expect(r!.message).toContain('1.62.0')` and `'brew install sui'`, both of which pass — so the test is weaker than the scenario's stated assertion. The brew-install hint is correct (passes); the version-range hint is correct; only the exact wording differs from the spec scenario.",
+    "impact": "If a scenario-runner literally greps the message for the spec wording (`Sui CLI 1.62.0 is outside the supported range`), the assertion will fail on the production output. Cycle-e2e-pass.sh's substring matching against scenarios.json could regress here. Either the spec or the probe message must move; the test does not currently catch the divergence.",
+    "recommendation": "Either (a) update the production message to drop the word `version` (`Sui CLI 1.62.0 is outside the supported range (1.63.2–1.64.1). Run: brew install sui`) so it matches the spec scenario verbatim, or (b) update scenarios.json line 269 to reference the actual production wording. Tighten T-160 to `expect(r!.message).toContain('Sui CLI 1.62.0 is outside the supported range')` (or the chosen final form) to prevent future drift.",
+    "evidence": "message: `Sui CLI version ${versionStr} is outside the supported range (1.63.2–1.64.1). Run: brew install sui`,",
+    "confidence": "high"
+  },
+  {
+    "id": "R5-004",
+    "title": "withSandboxRepoAbsent fixture is a documentation comment, not an enforced isolation",
+    "severity": "medium",
+    "category": "e2e-flow",
+    "file": "scripts/e2e/harness.ts",
+    "line_range": "198-205",
+    "description": "Scenario E-009's pre-condition (`harness moves it aside if it exists`) is implemented as `withSandboxRepoAbsent(): No-op: the test controls HOME via beforeEach.` That works only when the caller is the existing Vitest suite (which mutates `process.env.HOME = tempHome` in beforeEach at tests/harness.preflight.test.ts:73). If the e2e gate or a future scenario runner invokes `bootHarness` outside that fixture (for instance from cycle-e2e-pass.sh directly, or from a different test file that doesn't touch HOME), the probe will read the developer's real `~/workspace/deepbook-sandbox`. On many developer machines that directory exists, so E-009 silently turns into a passing probe and the negative case is never exercised. The harness method's name implies it actively stages the absent state, but it does nothing.",
+    "impact": "False-pass risk for E-009 across runners. The fixture's name (`withSandboxRepoAbsent`) reads as an active setter but the implementation is a stub. A scenario runner that trusts the method name but does not happen to also clobber HOME will exercise the developer's real sandbox checkout (or none) — non-hermetic. AC-2.2 coverage becomes environment-dependent.",
+    "recommendation": "Make the fixture self-sufficient. Either (a) have it remember the real HOME and assign a fresh tempdir for the lifetime of the harness (with cleanup that restores it on shutdown), or (b) have the probe read an injected homeDir from ProbeOptions and have the fixture set it. Update the comment to no longer rely on an external beforeEach contract — the fixture's contract should be self-contained.",
+    "evidence": "async withSandboxRepoAbsent(): Promise<void> {\n      // No-op: the test controls HOME via beforeEach.\n    },",
+    "confidence": "high"
+  },
+  {
+    "id": "R5-005",
+    "title": "ProbeResult lacks the failure-class discriminator the spec advertises",
+    "severity": "low",
+    "category": "e2e-flow",
+    "file": "mcp/server/src/preflight.ts",
+    "line_range": "19-23",
+    "description": "Spec line 86 promises probe failures are 'classified as auto-recoverable, guided, or stop.' Scenarios E-010 and E-011 explicitly assert the failure class is 'stop' / 'guided stop'. The ProbeResult interface carries only `pass`, `message`, optional `action` — no `class` / `kind` discriminator. Today the engine infers the class from the presence of `action` (action present => guided/auto-recoverable; action absent => stop). That works for E-010 (Docker probe emits no action) and E-011 (sui-cli probe emits no action), but the inference is implicit and not asserted by any test. A future probe that returns a non-shell action or that returns no action for an auto-recoverable case would silently misclassify.",
+    "impact": "Scenarios E-010/E-011 cannot make a structural assertion about failure class — they can only check message wording. AC-2.4 / AC-2.5 lean on the presence/absence of `action` as a proxy for `stop` vs `guided`, which is a fragile contract that the spec does not actually require. Future probe authors may break the implicit invariant without any test fail.",
+    "recommendation": "Add an explicit `class: 'auto-recoverable' | 'guided' | 'stop'` field on ProbeResult and have each probe set it (Docker => stop; sui-cli => guided; manifest => auto-recoverable). Update scenarios E-010/E-011 to assert on `r.class === 'stop' / 'guided'` instead of (or in addition to) message substring. Low severity because the current proxy works for the three scenarios I own; flagging for cycle-spec alignment.",
+    "evidence": "export interface ProbeResult {\n  pass: boolean;\n  message: string;\n  action?: ShellAction;\n}",
+    "confidence": "medium"
+  },
+  {
+    "id": "R5-006",
+    "title": "E-011 dispatch prompt and spec scenario disagree on stub version (1.50.0 vs 1.62.0)",
+    "severity": "info",
+    "category": "e2e-flow",
+    "file": ".forge/e2e/scenarios.json",
+    "line_range": "264-272",
+    "description": "Dispatch instructed me to drive `withSuiCliStub({version: '1.50.0'})`; the scenario file (E-011 step 2) asserts the failure message contains `\"Sui CLI 1.62.0 is outside the supported range\"`. Both versions are below MIN_VERSION [1,63,2] and both yield pass:false with the same message shape, so functionally either drives the same probe path. But the test (T-160) is hard-coded to 1.62.0; the dispatch's 1.50.0 would change the asserted substring. Whichever version is canonical, only one should appear across spec/scenarios/test/dispatch. Treating this as info because it does not change scenario behavior, only string assertions.",
+    "impact": "Risk of spec/dispatch/test drift if cycle-e2e-pass.sh greps a different version literal than the scenario runner. Currently absorbed by the test using 1.62.0 and the dispatch's 1.50.0 producing structurally identical results.",
+    "recommendation": "Pick one version (recommend 1.62.0 since it is in scenarios.json + the existing test) and have the dispatch prompts reference that. Update the dispatch template (or the README of the e2e runner) so future reviewers do not see a mismatch.",
+    "evidence": "\"assert preflight probe #4 fails with \\\"Sui CLI 1.62.0 is outside the supported range\\\"\"",
+    "confidence": "high"
+  }
+]

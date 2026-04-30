@@ -1,0 +1,67 @@
+[
+  {
+    "id": "R3-001",
+    "title": "E-006 corrupt state archives bytes and surfaces warning at runtime",
+    "severity": "info",
+    "category": "e2e-flow",
+    "file": "mcp/server/src/tools/start.ts",
+    "line_range": "54-68",
+    "description": "Scenario E-006 walked end-to-end via the in-process MCP harness: seeded <projectRoot>/.sui-deepbook-course/state.json with truncated invalid JSON, called the start tool through bootHarness, observed warnings[0]={kind:'state-corrupt', archivedTo:<absolute path>, message:<contains 'archived'>}, the archive file existed on disk, and start.state was null. The byte-for-byte archive guarantee from state.test.ts T-048 holds end-to-end. AC-7.2 minimum surface (corrupt classification + archive + non-null path) is met.",
+    "impact": "Scenario E-006 confirms the visible side-effects required by AC-7.2 happen exactly as the spec says.",
+    "recommendation": "Keep — scenario passes at runtime. See R3-002 for the recovery-flow defect this scenario does NOT exercise but the spec implies in step 4.",
+    "evidence": "scenario E-006: warnings[0].kind==='state-corrupt' && warnings[0].archivedTo is a real path; fs.existsSync(archivedTo)===true; archived bytes byte-equal seeded corrupt input.",
+    "confidence": "high"
+  },
+  {
+    "id": "R3-002",
+    "title": "Corrupt state.json is archived but never unlinked — recovery flow deadlocks",
+    "severity": "high",
+    "category": "e2e-flow",
+    "file": "mcp/server/src/state.ts",
+    "line_range": "87-106",
+    "description": "Scenario E-006 step 4 is 'choose \"resume from phase 0\"; assert a fresh state.json is created and cursor is at p1-bootstrap/p1-spot-1'. The implementation archives the corrupt bytes but never removes (nor truncates, nor overwrites) <projectRoot>/.sui-deepbook-course/state.json. selectPath calls loadState first and short-circuits on corrupt with errors:['State corrupt: ...'] (selectPath.ts L83-85), so the user cannot transition out of the corrupt state through any documented MCP tool. Verified by directly driving start → selectPath via the harness: selectPath returns ok:false; a second start re-archives the same bytes; running it N times produces N+1 archive files. The student is wedged unless they manually `rm state.json` outside the plugin — there is no MCP-side recovery action.",
+    "impact": "AC-7.2's full intent ('the student is offered \"resume from phase 0\" or \"abort\"' in spec.md L122) is unimplemented. A real student who hits state corruption cannot resume without leaving the plugin to delete state.json by hand. Each /start retry leaks another corrupt-archive file under .sui-deepbook-course/, growing without bound.",
+    "recommendation": "Add a recovery step. Two clean options: (1) introduce a `resetState` MCP tool that unlinks state.json after archiving (the skill calls it after the user picks 'resume'), or (2) in selectPath, when stateResult.kind==='corrupt' AND the archive write succeeded, treat it as 'absent' and proceed (existing archive preserves the original bytes). Either way, state.ts must own the unlink-after-archive contract, and start should de-duplicate archive emission so repeated /start calls do not regenerate archives of identical bytes.",
+    "evidence": "state.ts archiveCorruptFile only writes the archive: `await fsPromises.writeFile(archivePath, content, { flag: 'wx', mode: 0o600 }); return archivePath;` — no `await fsPromises.unlink(path.join(stateDir, STATE_FILE))` after. selectPath.ts L83: `if (stateResult.kind === 'corrupt') { return { ok: false, errors: [\\`State corrupt: ${stateResult.message}\\`] }; }`. Harness drive of scenario E-006 step 4 produces selectPath ok:false; second start emits a 2nd archive with N=3 archives after 3 calls.",
+    "confidence": "high"
+  },
+  {
+    "id": "R3-003",
+    "title": "E-016 schema-version mismatch is a guided stop with no archive emitted",
+    "severity": "info",
+    "category": "e2e-flow",
+    "file": "mcp/server/src/state.ts",
+    "line_range": "62-70",
+    "description": "Scenario E-016 walked end-to-end via the harness: seeded state.json with valid JSON whose schema_version=999, called start, observed warnings[0]={kind:'state-schema-mismatch', foundVersion:999, message:contains 'incompatible' AND 'migration'}, and confirmed (a) zero `state.corrupt-*.json` archives in .sui-deepbook-course/, (b) canonical state.json byte-for-byte unchanged, (c) startResult.state===null. AC-7.3's distinction from corruption recovery (E-006) is preserved: corrupt archives, schema-mismatch does not. start.ts L70-78 dispatches the schema-mismatch branch into the warnings array without invoking any archive write.",
+    "impact": "Scenario E-016 confirms a unknown schema version is a guided stop, distinct from the corruption recovery path, with no silent fresh state created and no archive churn.",
+    "recommendation": "Keep — scenario passes; behaviour matches spec ## Failure Modes 'Schema version mismatch ⇒ guided stop, not corruption recovery'.",
+    "evidence": "scenario E-016: warnings.find(w=>w.kind==='state-schema-mismatch').foundVersion===999; fs.readdirSync(stateDir).filter(n=>n.startsWith('state.corrupt-')).length===0; canonical bytes preserved.",
+    "confidence": "high"
+  },
+  {
+    "id": "R3-004",
+    "title": "E-004 full help-ladder traversal: hint→reference→auto-finish advances cursor",
+    "severity": "info",
+    "category": "e2e-flow",
+    "file": "mcp/server/src/tools/requestHint.ts",
+    "line_range": "75-322",
+    "description": "Scenario E-004 walked end-to-end via the harness with withVerifyStub. Sequence: start → selectPath('01-orderbook-viewer') → setPersonalization({}) → nextSpot (returned phase p1-bootstrap, spot p1-spot-1, target_file src/App.tsx, target_range 39-58) → withVerifyStub({pass:false}) → verifySpot returned pass:false → requestHint(rung:1) returned ok:true with non-empty payload, persisted ladder.p1-spot-1.hint_used=true → requestHint(rung:2) returned ok:true, persisted reference_shown=true → withVerifyStub({pass:true}) → requestHint(rung:3) returned ok:true with autoVerifyResult.pass=true and autoVerifyResult.advanced=true → final state.json shows ladder.p1-spot-1 = {hint_used:true, reference_shown:true, auto_completed:true, auto_write_attempted:true} and cursor advanced to phase_id 'p2-polling', spot_id 'p2-spot-1'. AC-5.1 (rung gating), AC-5.2 (state mutation), AC-5.3 (cursor advances on rung-3 verify pass), AC-5.4 (auto_completed never cleared) all hold on the live wire.",
+    "impact": "Scenario E-004 confirms the load-bearing pedagogy primitive works end-to-end: the help ladder is opt-in, gated, observable in state, and rung 3 advances the cursor only when verification passes after the auto-write.",
+    "recommendation": "Keep — scenario passes. One adjacent observation that is NOT a defect for this scenario but worth surfacing to the design reviewer: `requestHint` does NOT itself check that the prior verifySpot failed before letting rung 1 fire (canAdvanceRung only gates rung 2 on hint_used and rung 3 on reference_shown). The student can request a hint without ever attempting the spot. The spec's 'Mixing rungs collapses the pedagogy' invariant is enforced by the skill, not the tool — which is acceptable but should be documented.",
+    "evidence": "scenario E-004: state.ladder['p1-spot-1']={hint_used:true,reference_shown:true,auto_completed:true,auto_write_attempted:true}; cursor.spot_id='p2-spot-1' after rung-3; bak file .sui-deepbook-course/snapshots/p1-spot-1.bak created; r3.autoVerifyResult.advanced===true.",
+    "confidence": "high"
+  },
+  {
+    "id": "R3-005",
+    "title": "E-004 sub-step 'verifySpot auto-runs after spot complete' is unimplemented in current MCP surface",
+    "severity": "medium",
+    "category": "e2e-flow",
+    "file": "mcp/server/src/tools/verifySpot.ts",
+    "line_range": "1-1",
+    "description": "Scenario E-004's last 4 steps (`harness writes a syntactically broken edit into src/App.tsx lines 103-114 and signals \"spot complete\"`, `assert verifySpot is invoked automatically (without the harness explicitly calling it) and reports failure`, `assert the help-ladder offer (rung 1 hint) is surfaced as a result of the failure`) presuppose a 'spot complete' signal that auto-triggers verifySpot. There is no such signal in the MCP surface — there is no `signalSpotComplete` tool, and `nextSpot` does not auto-run verification. verifySpot only fires when the caller (Claude / harness) calls it. The cycle-5 unit suite explicitly handled rung 3's auto-verify dispatch inside requestHint, but the analogous 'student finished writing → engine auto-verifies' protocol for non-ladder spot completion is not wired anywhere. The scenario thus cannot be fully driven by harness alone; only the rung-3 auto-verify portion (which IS wired) is exercisable today.",
+    "impact": "Coverage gap for AC-4.3 ('Verification runs after every spot completion; failure routes to the help ladder'). The cycle-5 cycle covers AC-4.3 for the rung-3 path inside requestHint, but a student who hand-writes their own edit cannot trigger the engine's verification + ladder routing without explicitly calling verifySpot. If the contract requires auto-verification on spot complete, the engine needs either a new MCP tool ('completeSpot' or a dedicated event) or the skill must instruct Claude to always call verifySpot after the student signals done — but the latter is content, not engine.",
+    "recommendation": "Either (a) add a `completeSpot` MCP tool that internally dispatches runVerifySpot and, on failure, returns a payload that includes `nextLadderRung: 1` (the suggestion the spec implies); (b) document explicitly in spec.md that the 'auto-verifySpot after spot complete' invariant is enforced by the skill body and not by the engine, and update E-004 to call verifySpot explicitly; or (c) have nextSpot, when re-called on the same spot id with the file mtime newer than the last verify, auto-run verifySpot and return the result inline. Option (b) is the cheapest and matches the cycle-5 architectural posture.",
+    "evidence": "verifySpot.ts and tools/index.ts: no auto-trigger seam — runVerifySpot is only invoked from the verifySpot tool handler and from requestHint rung 3. No 'spot-complete' or 'signalSpotComplete' tool name appears anywhere in mcp/server/src/. E-004 step 'assert verifySpot is invoked automatically (without the harness explicitly calling it)' has no matching code path outside the rung-3 dispatch.",
+    "confidence": "high"
+  }
+]

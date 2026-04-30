@@ -1,0 +1,27 @@
+{
+  "worker": 2,
+  "target_files": [
+    "paths/01-orderbook-viewer/phases.json",
+    "paths/01-orderbook-viewer/rungs/p2-spot-1/hint.md",
+    "paths/01-orderbook-viewer/rungs/p2-spot-1/reference.md",
+    "paths/01-orderbook-viewer/rungs/p2-spot-1/auto.md",
+    "paths/01-orderbook-viewer/rungs/p3-spot-1/hint.md",
+    "paths/01-orderbook-viewer/rungs/p3-spot-1/reference.md",
+    "paths/01-orderbook-viewer/rungs/p3-spot-1/auto.md",
+    "paths/01-orderbook-viewer/phases/p2.md",
+    "paths/01-orderbook-viewer/phases/p3.md",
+    "mcp/server/src/outputStyle.ts",
+    "mcp/server/src/state.ts",
+    "mcp/server/src/warnings.ts",
+    "mcp/server/src/tools/selectPath.ts",
+    "mcp/server/src/tools/start.ts",
+    "mcp/server/src/tools/runPreflightProbe.ts",
+    ".forge/e2e/scenarios.json",
+    "scripts/cycle-e2e-pass.sh"
+  ],
+  "lines_changed": 285,
+  "files": 17,
+  "blocked": false,
+  "tests_pass": null,
+  "notes": "Fix 1 (H001): phases.json renames p2-polling→p2-retry (target_range 103-114, compile verification, rungs/doc_links) and p3-display→p3-poll (target_range 116-145, simulate verification, {{ poll_interval_ms }} in prompt). 8 new content files created under rungs/ and phases/. Fix 2 (H002): outputStyle.ts now returns { ok: false, warning: { kind: 'output-style-plugin-not-enabled', message: '...' } } on both refusal branches (enabledPlugins missing/non-object, and plugin key absent/not-true). Added OutputStylePluginNotEnabledWarning to warnings.ts. Updated start.ts to use wider warnings union type. Fix 3 (H003): state.ts archiveCorruptFile de-duplicates by SHA-256 content hash — second call with identical bytes returns existing archive path without writing a new file. selectPath.ts: when stateResult.kind==='corrupt' AND archivedTo is defined, treats slot as absent and mints fresh State via saveState. Fix 4 (H004): runPreflightProbe accepts probeOpts: Partial<Record<ProbeId, ProbeOptions>> and threads it into runProbe(pid, probeOpts[pid] ?? {}) both for the initial probe call and inside runDeployRemediation's precondition checker. Fix 5 (H005): .forge/e2e/scenarios.json E-008 preconditions gains 'Sui CLI in 1.63.2–1.64.1...' as 5th entry. scripts/cycle-e2e-pass.sh created (executable) with sui version check before docker check — out-of-range sui emits SKIP E-008 with sui in the reason, exits 0, no deploy spawn."
+}

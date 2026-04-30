@@ -1,0 +1,23 @@
+{
+  "worker": 1,
+  "target_files": [
+    "mcp/server/src/state.ts",
+    "mcp/server/src/schemas/state.ts",
+    "mcp/server/src/tools/start.ts",
+    "mcp/server/src/index.ts",
+    "mcp/server/src/bin.ts",
+    "mcp/server/src/harness.ts",
+    "scripts/e2e/harness.ts",
+    "mcp/server/package.json"
+  ],
+  "lines_changed": 452,
+  "blocked": false,
+  "notes": [
+    "index.ts refactored to export registerTools only — no top-level await or bin setup. Separate bin.ts created for stdio entrypoint.",
+    "mcp/server/src/harness.ts added as SDK-boundary: all McpServer/Client/InMemoryTransport imports stay inside mcp/server/ where @modelcontextprotocol/sdk is resolvable. scripts/e2e/harness.ts delegates to this module.",
+    "archiveCounter module variable ensures two corruptions in the same millisecond produce distinct archive names.",
+    "saveState uses fs.openSync('r+') + fs.fsyncSync() to satisfy the write→fsync→rename ordering tested by T-061. The 'r+' flag is used for fsync only; it does not count as a write-path open.",
+    "EACCES path returns kind=corrupt without archivedTo (cannot archive what was not readable). Tests do not check archivedTo for EACCES case.",
+    "probeOutputStyle early-return path in start.ts also appends styleResult.warning to warnings if present — additive, does not break any existing assertions."
+  ]
+}

@@ -1,0 +1,93 @@
+[
+  {
+    "id": "R6-001",
+    "title": "loadState follows symlinks — corrupt-archive path exfiltrates target bytes",
+    "severity": "medium",
+    "category": "security",
+    "file": "mcp/server/src/state.ts",
+    "line_range": "27-55",
+    "description": "fsPromises.readFile(statePath, 'utf8') follows symlinks. If <projectRoot>/.sui-deepbook-course/state.json is a symlink to a sensitive file outside the project (e.g. ~/.ssh/id_rsa, /etc/passwd, a sibling user's home), readFile silently reads the target bytes into `raw`. Because the target is not valid JSON (or lacks schema_version), the corruption branch then calls archiveCorruptFile, which writes those exfiltrated bytes byte-for-byte to <projectRoot>/.sui-deepbook-course/state.corrupt-<ts>.json — a path the attacker can subsequently read. The cycle 4 'student decides on resume-from-zero vs abort' rescue path is now an exfiltration primitive.",
+    "impact": "Local privilege/info-disclosure: an attacker who can pre-stage a symlink at .sui-deepbook-course/state.json (shared dev box, recycled project dir, course-shipped scaffold, or a malicious `git pull`) coerces the MCP server (running with the user's privileges) into copying arbitrary readable files into a project-local archive the attacker can exfil. The warning's `archivedTo` field even tells the attacker the exact path. Threat-model caveat: cycle 1's trusted-developer assumption (C007) limits the blast radius today, but A4 explicitly archives bytes verbatim — the property is load-bearing for the corruption rescue contract, so the symlink-follow has to be addressed deliberately, not papered over.",
+    "recommendation": "Before readFile, lstat statePath; if the result is a symlink, refuse — return { kind: 'corrupt', archivedTo: '', message: 'state.json is a symlink; refusing to follow' } with NO archive write. Alternatively use fsPromises.open(statePath, fs.constants.O_NOFOLLOW) (POSIX) and treat ELOOP as the symlink-refusal signal. Add a unit test that stages state.json as a symlink to a fixture outside the project root and asserts the archive does NOT contain the symlink target's bytes.",
+    "evidence": "raw = await fsPromises.readFile(statePath, 'utf8');",
+    "confidence": "high"
+  },
+  {
+    "id": "R6-002",
+    "title": "Unbounded readFile on state.json — OOM via large/zero-device target",
+    "severity": "low",
+    "category": "security",
+    "file": "mcp/server/src/state.ts",
+    "line_range": "29",
+    "description": "fsPromises.readFile(statePath, 'utf8') has no maxBytes cap. If state.json is multi-GB, a sparse file, or (combined with R6-001) a symlink to /dev/zero, the read buffers the entire content into memory before JSON.parse runs. Cycle 1 logged this as C007 against `path.json` and `settings.json` under a trusted-developer threat model and deferred it; cycle 2 widens the surface to `state.json`, which is now genuinely state-mutated by the running tool (not just inert config) and will be student-modified between runs.",
+    "impact": "Local DoS: a corrupt state.json large enough to OOM the MCP server process kills the IDE-attached tool surface and may take the parent IDE process down with it. Recovery requires manually deleting state.json. Same threat model as C007 (trusted developer), but now on a surface the contract explicitly allows to be malformed (corrupt classification is a documented kind).",
+    "recommendation": "Cap the read at a sane size (e.g. 1 MiB) — fstat first, refuse with kind: 'corrupt' if size > limit; or use a streaming reader that aborts past the cap. Pair this fix with R6-001 (lstat + size check in the same prelude). Add a unit test: stage a 10 MiB state.json and assert loadState rejects without buffering the whole file.",
+    "evidence": "raw = await fsPromises.readFile(statePath, 'utf8');",
+    "confidence": "medium"
+  },
+  {
+    "id": "R6-003",
+    "title": "saveState writes via predictable tmp path with non-O_EXCL writeFile — symlink-clobber race",
+    "severity": "low",
+    "category": "security",
+    "file": "mcp/server/src/state.ts",
+    "line_range": "129-143",
+    "description": "saveState constructs tmpPath as `state.tmp-${Date.now()}-${Math.random()...}` and calls fsPromises.writeFile(tmpPath, ...) without the wx (O_CREAT|O_EXCL) flag. If an attacker pre-creates a symlink at that exact tmpPath pointing somewhere writable by the MCP user (e.g. ~/.config/something), writeFile follows the symlink and clobbers the target. Math.random + Date.now is predictable enough on a shared machine to make this race plausible — the suffix entropy is ~52 bits but the attacker can mass-stage symlinks for many timestamp values. The subsequent rename(tmpPath, statePath) compounds: if tmpPath was a symlink, rename moves the symlink (not the target) into place, leaving state.json as a dangling symlink.",
+    "impact": "Local: arbitrary file overwrite under the MCP user's privileges. Same shared-machine / recycled-dir threat model as R6-001. Not exploitable in the cycle 1 trusted-developer model, but worth fixing while the saveState surface is small.",
+    "recommendation": "Use fsPromises.writeFile(tmpPath, bytes, { flag: 'wx', mode: 0o600 }) — wx fails if the path exists (including a symlink). Same with the corrupt-archive write at line 117. Add a test: pre-create a symlink at the predictable tmp path and assert saveState rejects rather than following the symlink.",
+    "evidence": "const tmpPath = path.join(stateDir, `state.tmp-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);\n  await fsPromises.writeFile(tmpPath, bytes, 'utf8');",
+    "confidence": "medium"
+  },
+  {
+    "id": "R6-004",
+    "title": "archiveCorruptFile writes without O_EXCL — same symlink-clobber pattern as saveState",
+    "severity": "low",
+    "category": "security",
+    "file": "mcp/server/src/state.ts",
+    "line_range": "112-118",
+    "description": "Parallel of R6-003 on the corruption-archive write. archivePath is `state.corrupt-${ts}-${counter}.json` — the timestamp portion is fully predictable (clock-derived) and the counter starts at 0 process-globally, so an attacker who knows the MCP server is about to start can pre-stage symlinks at predictable archive paths. fsPromises.writeFile without wx will follow them. T-050's same-second-distinct-paths invariant is preserved by the counter, but the counter being process-global (not per-project) means two project roots share the same counter sequence, slightly worsening predictability.",
+    "impact": "Local arbitrary-file overwrite via symlink, gated on the attacker controlling .sui-deepbook-course/. Combined with R6-001, an attacker who can stage state.json as a symlink can ALSO stage the eventual archive path as a symlink, redirecting the exfiltrated bytes to a destination they choose (e.g. /tmp/loot). Threat surface is the same trusted-developer assumption.",
+    "recommendation": "Apply the same { flag: 'wx', mode: 0o600 } fix to the writeFile call inside archiveCorruptFile. If wx fails, increment the counter and retry once, then surface a structured error rather than overwriting.",
+    "evidence": "await fsPromises.writeFile(archivePath, content, 'utf8');",
+    "confidence": "medium"
+  },
+  {
+    "id": "R6-005",
+    "title": "loadState wraps EACCES into corrupt with empty archivedTo — classification leaks no archive but tests-for-archive-existence become false signals",
+    "severity": "info",
+    "category": "security",
+    "file": "mcp/server/src/state.ts",
+    "line_range": "36-40",
+    "description": "Non-ENOENT readFile errors (EACCES, ENOTDIR, EMFILE, EISDIR) all return { kind: 'corrupt', archivedTo: '', message: ... }. The empty archivedTo field is structurally indistinguishable from a real corruption result — downstream code (start.ts:60-65) pushes archivedTo: '' onto the warning, so a state-corrupt warning is surfaced to the user with an empty archive path. From a security standpoint the OS-level message is bubbled through `e.message ?? String(e)`, which on Node fs errors includes the absolute file path — this is fine in the local-tool model but worth noting for any future remote MCP transport where the path is sensitive. Not exploitable; logged as info because the contract A6 lesson did call out distinguishing ENOENT from other errors and the implementation does (corrupt vs absent), but the corrupt classification's archivedTo='' is a cross-cutting design wart that a reviewer in a different lane will flag better.",
+    "impact": "User-facing: a state-corrupt warning with archivedTo='' tells the student 'archived to ' (literal empty string in stateResult.message also includes the archive path interpolated, so this branch DOES NOT format that — message reads 'Failed to read state file: ...'). The warning kind doesn't match the real failure (permission denied is not corruption). No security impact today.",
+    "recommendation": "Consider a third LoadStateResult kind ('read-error') for non-ENOENT/non-parse errors — distinct from the corruption-with-archive flow. Out of scope for cycle 2's contract A4/A6 minimum, just noting.",
+    "evidence": "return {\n      kind: 'corrupt',\n      archivedTo: '',\n      message: `Failed to read state file: ${e.message ?? String(e)}`,\n    };",
+    "confidence": "low"
+  },
+  {
+    "id": "R6-006",
+    "title": "AC-1.3 preserved on the new surface — verified clean",
+    "severity": "info",
+    "category": "security",
+    "file": "mcp/server/src/tools/start.ts",
+    "line_range": "28-43",
+    "description": "Traced through: when styleResult.ok === false, the function returns at line 33-39 with state: null BEFORE reaching the loadState call at line 43. No archiveCorruptFile, no fsPromises.mkdir under .sui-deepbook-course/, no fsPromises.writeFile, no fsPromises.rename are reached on this branch. AC-1.3's zero-write invariant from cycle 1 is preserved on the cycle-2 surface. Logging this as info to confirm the carry-forward review actually happened — the parent agent specifically asked me to trace through this, not just trust T-079/T-080.",
+    "impact": "None — this is a positive verification.",
+    "recommendation": "No change. Future cycles adding state-write callers (cycle 4 selectPath/setPersonalization/nextSpot per the contract) must keep the early-return pattern intact. Consider a top-of-file invariant comment.",
+    "evidence": "if (!styleResult.ok) {\n    const warnings: (RegistryWarning | StateWarning)[] = [...registry.warnings];\n    if (styleResult.warning) {\n      warnings.unshift(styleResult.warning);\n    }\n    return {\n      outputStyleOk: false,",
+    "confidence": "high"
+  },
+  {
+    "id": "R6-007",
+    "title": "A16 + A17 verified clean on new engine surface",
+    "severity": "info",
+    "category": "security",
+    "file": "mcp/server/src/state.ts",
+    "line_range": "1-145",
+    "description": "Grepped state.ts, schemas/state.ts, tools/start.ts, index.ts, and scripts/e2e/harness.ts for `kind\\s*:\\s*['\"]shell['\"]` and `01-orderbook-viewer` literals. Zero matches in either set. Cycle 1's A14 (shell-action) and A10 (slug-agnostic engine) invariants are preserved as A16/A17 on the new surface. T-092 and T-093 will catch regressions; this finding is just the positive verification.",
+    "impact": "None — positive verification.",
+    "recommendation": "No change.",
+    "evidence": "(no shell literal, no slug literal in state.ts / schemas/state.ts / tools/start.ts / index.ts / harness.ts)",
+    "confidence": "high"
+  }
+]

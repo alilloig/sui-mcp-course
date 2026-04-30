@@ -1,0 +1,50 @@
+{
+  "worker": 2,
+  "target_files": [
+    "mcp/server/src/warnings.ts",
+    "mcp/server/src/state.ts",
+    "mcp/server/src/preflight.ts",
+    "mcp/server/src/verify.ts",
+    "mcp/server/src/phaseEngine.ts",
+    "mcp/server/src/personalization.ts",
+    "mcp/server/src/index.ts",
+    "mcp/server/src/schemas/state.ts",
+    "mcp/server/src/schemas/phases.ts",
+    "mcp/server/src/schemas/path.ts",
+    "mcp/server/src/tools/selectPath.ts",
+    "mcp/server/src/tools/setPersonalization.ts",
+    "mcp/server/src/tools/nextSpot.ts",
+    "mcp/server/src/tools/verifySpot.ts",
+    "scripts/e2e/harness.ts",
+    "paths/01-orderbook-viewer/path.json",
+    "paths/01-orderbook-viewer/phases.json",
+    "paths/01-orderbook-viewer/phases/p1-bootstrap.md",
+    "paths/01-orderbook-viewer/reference/App.tsx",
+    "paths/01-orderbook-viewer/rungs/p1-spot-1/hint.md",
+    "paths/01-orderbook-viewer/rungs/p1-spot-1/reference.md",
+    "paths/01-orderbook-viewer/rungs/p1-spot-1/auto.md"
+  ],
+  "lines_changed": 2349,
+  "blocked": false,
+  "notes": {
+    "gap_closures": [
+      "T-286 withVerifyStub: verify.ts exports setVerifyStub seam; harness.withVerifyStub({ pass, output? }) calls setVerifyStub and registers cleanup in shutdown",
+      "T-171 EngineWarning union: warnings.ts replaces loose RegistryWarning with 8-literal discriminated union; drops orphan PathMalformedWarning/PathsEmptyWarning/PathsMissingWarning; adds PhaseEngineWarning with 3 literals; full EngineWarning = 16 literals",
+      "TS strict verifySpot.ts:48: cast through unknown first: (spot as unknown as { verification: VerificationSpec }).verification",
+      "T-260 setSpawnOverride removed: preflight.ts has no module-level setSpawnOverride export; harness intercepts runPreflightProbe calls internally via spawnStubs Map + direct runProbe call with ProbeOptions.spawn"
+    ],
+    "carry_forwards": [
+      "A13: per-call ProbeOptions.spawn only in preflight.ts",
+      "A14: removed fs.fsyncSync and import * as fs from node:fs from state.ts",
+      "A15: LadderRung.auto_write_attempted optional, defaults to false in validateState normalization",
+      "A12: RegistryWarning is true discriminated union of 8 literal kinds",
+      "validatePhases presence-implies-presence rule: new required fields only enforced when any is present (preserves cycle-1/2/3 minimal stub backward compat)"
+    ],
+    "constraint_checks": [
+      "PASS: no setSpawnOverride in mcp/server/src/",
+      "PASS: no 01-orderbook-viewer literals in engine/scripts code",
+      "PASS: no kind: 'shell' in tool files",
+      "PASS: verify.ts has exactly one spawn-invoking branch (compile adapter)"
+    ]
+  }
+}

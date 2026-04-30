@@ -1,0 +1,93 @@
+[
+  {
+    "id": "R1-001",
+    "title": "EACCES read-error path emits archivedTo: '' violating LoadStateResult variant intent",
+    "severity": "medium",
+    "category": "correctness",
+    "file": "mcp/server/src/state.ts",
+    "line_range": "36-40",
+    "description": "When readFile rejects with a non-ENOENT errno (EACCES, ENOTDIR, EISDIR, etc.), loadState returns { kind: 'corrupt', archivedTo: '', message: 'Failed to read state file: ...' }. No archive was actually written, but the variant still carries archivedTo as an empty string. Downstream, tools/start.ts unconditionally pushes archivedTo from any corrupt result onto the state-corrupt warning (lines 60-64), so a permission-denied state.json produces a user-facing warning whose archivedTo field is the empty string. Contract A6 says read errors should be 'corrupt with a wrapped read-error message' — the message is correct, but archivedTo: '' is misleading both structurally and to the user.",
+    "impact": "A student hitting an EACCES on state.json will see a warning that claims an archive exists at the empty path. The LoadStateResult type union also conflates 'corrupt-and-archived' with 'read-error' onto the same kind, so callers cannot reliably distinguish them. T-058 does not catch this because it only asserts kind === 'corrupt' and a message regex, never inspects archivedTo.",
+    "recommendation": "Either (a) make archivedTo optional on the corrupt variant and omit it for read-error cases, or (b) introduce a distinct kind: 'read-error' (or the wrapped message variant the contract hints at), and update tools/start.ts to omit the archivedTo field on the warning when no archive was written.",
+    "evidence": "return {\n      kind: 'corrupt',\n      archivedTo: '',\n      message: `Failed to read state file: ${e.message ?? String(e)}`,\n    };",
+    "confidence": "high"
+  },
+  {
+    "id": "R1-002",
+    "title": "saveState fsyncs an O_RDONLY fd — durability of tmp file is platform-dependent",
+    "severity": "low",
+    "category": "correctness",
+    "file": "mcp/server/src/state.ts",
+    "line_range": "134-140",
+    "description": "saveState opens the tmp file with the read-only flag ('r') and then calls fs.fsyncSync(fd). The contract A7 promises a 'write-tmp-then-fsync-then-rename' sequence with the fsync flushing the tmp file's bytes to durable storage. On Linux fsync of an O_RDONLY fd is permitted and typically does flush the inode, but the conventional/portable approach is to fsync the same fd (or a write-capable fd) used to perform the write — fsync semantics on a read-only descriptor are implementation-defined across platforms. T-061 only asserts the order of writeFile/fsync/rename calls, not that fsync was called on a write-capable descriptor, so this slips past green.",
+    "impact": "On a platform whose fsync(O_RDONLY) is a no-op, a process killed between writeFile and rename could leave the tmp bytes in the page cache, defeating the durability guarantee A7 documents. Low severity because the rename-only-mutates-canonical invariant still holds (the canonical state.json is never partially written), but the durability claim in A7 is weakened.",
+    "recommendation": "Acquire the fd by writing through it directly (fs.openSync(tmpPath, 'w'), fs.writeSync(fd, bytes), fs.fsyncSync(fd), fs.closeSync(fd)), or use fsPromises.open(tmpPath, 'r+') to obtain a fd whose fsync semantics are unambiguous. Add an explicit unit test that asserts the open mode used for the fsynced fd has write capability.",
+    "evidence": "const fd = fs.openSync(tmpPath, 'r');\n  try {\n    fs.fsyncSync(fd);\n  } finally {\n    fs.closeSync(fd);\n  }",
+    "confidence": "medium"
+  },
+  {
+    "id": "R1-003",
+    "title": "Archive read+write through utf8 round-trip is not byte-for-byte for non-UTF8 input",
+    "severity": "low",
+    "category": "correctness",
+    "file": "mcp/server/src/state.ts",
+    "line_range": "29-29, 117-117",
+    "description": "loadState reads the canonical state.json with `fsPromises.readFile(statePath, 'utf8')` (string decode), then archiveCorruptFile writes the same string back with `fsPromises.writeFile(archivePath, content, 'utf8')`. Contract A4 promises the archive is byte-for-byte identical to the original. For ASCII / well-formed UTF-8 input this round-trips losslessly, but for arbitrary corrupt bytes — which is exactly the input class A4 covers — Node's utf8 decoder replaces invalid sequences with U+FFFD, breaking byte-for-byte equality. T-048 happens to use only ASCII fixture bytes, so the test passes on a property the implementation does not actually guarantee.",
+    "impact": "If a real student's state.json gets corrupted by a partial flush, log injection, or non-UTF8 binary garbage, the archive will silently lose the original bytes. Recovery / forensics on the archive becomes impossible because the canonical-on-disk bytes and archive bytes will diverge. Low severity in practice (writers in this cycle only emit JSON), but the contract makes a stronger claim than the code delivers.",
+    "recommendation": "Read and write the file as a Buffer: `await fsPromises.readFile(statePath)` (no encoding) for the corruption-archive path, and `await fsPromises.writeFile(archivePath, buf)`. Decode to utf8 only for the JSON.parse step, and pass the original Buffer through to archiveCorruptFile. Strengthen T-048 with a non-UTF8 corrupt fixture (e.g. a few 0xFF bytes) to lock in the invariant.",
+    "evidence": "raw = await fsPromises.readFile(statePath, 'utf8');",
+    "confidence": "high"
+  },
+  {
+    "id": "R1-004",
+    "title": "JSON-valid file missing schema_version is silently archived as corrupt",
+    "severity": "low",
+    "category": "correctness",
+    "file": "mcp/server/src/state.ts",
+    "line_range": "58-70",
+    "description": "If state.json parses to a JSON object that lacks a numeric `schema_version` field (e.g. an empty object {}, or a dump from an older pre-1.0 schema that used a string version), loadState archives the bytes and returns kind: 'corrupt'. Contract A4 reserves 'corrupt' for JSON-parse failure; A5 reserves 'schema-mismatch' (no archive) for parseable-but-unknown-version. A parseable-but-no-version-at-all file is in neither bucket, and the implementer's choice was to lump it with 'corrupt' (write an archive). That collapses the load-bearing 'do not conflate' promise the cycle's intro paragraph emphasizes.",
+    "impact": "A student who hand-edits state.json and forgets the schema_version key gets their file archived (and then on next start, the canonical is still there, classified corrupt again, producing a second archive). Each start invocation creates a new archive until the student re-adds schema_version. This is the same accidental archive-spam pattern A5 was written to prevent. Low severity because the path is unusual, but the contract's spirit is violated.",
+    "recommendation": "Treat 'JSON-valid object missing schema_version' as schema-mismatch with foundVersion: null (or 0), no archive. Or, alternatively, require state files to have a schema_version and document it explicitly; either way, do not silently archive. Add a unit test for the missing-schema_version case.",
+    "evidence": "if (\n    typeof parsed !== 'object' ||\n    parsed === null ||\n    typeof (parsed as Record<string, unknown>)['schema_version'] !== 'number'\n  ) {\n    // Can't determine schema_version — archive as corrupt\n    const archivedTo = await archiveCorruptFile(stateDir, statePath, raw);",
+    "confidence": "medium"
+  },
+  {
+    "id": "R1-005",
+    "title": "Schema validation failure on schema_version-1 file is archived, not surfaced as schema-mismatch",
+    "severity": "low",
+    "category": "correctness",
+    "file": "mcp/server/src/state.ts",
+    "line_range": "82-91",
+    "description": "When parsed.schema_version === STATE_SCHEMA_VERSION but validateState rejects the structure (e.g. selected_path missing, history not an array), loadState archives the file and classifies as 'corrupt' with a message embedding the validator error. The contract A5 distinguishes corruption (parse failure) from schema-mismatch (parseable-but-version-unknown); a third class — parseable-and-version-known-but-shape-invalid — is left implicit. Treating it as corrupt-with-archive means a student whose state file is structurally wrong (e.g., truncated by a tool that wrote only some fields) gets the same archive-rescue treatment as raw garbage, but the schema_version=1 version is also valid, so on subsequent starts the canonical file is still there and gets archived again on every run.",
+    "impact": "Repeated archive creation on a file that is parseable JSON but shape-invalid. Same archive-spam pattern as R1-004, just one branch deeper. Tests don't cover this case directly (T-067-T-074 test validateState in isolation; T-048 tests JSON.parse failure). Low severity because in normal operation only saveState writes state.json and saveState always writes a validateable shape.",
+    "recommendation": "Decide whether shape-invalid-but-parseable counts as corrupt (current behavior) or warrants a third classification kind (e.g. 'invalid-shape') with no archive. If keeping current behavior, add a unit test asserting the archive-on-shape-invalid path so the choice is locked. If splitting, mirror A5's no-archive rule.",
+    "evidence": "const validation = validateState(parsed);\n  if (!validation.ok) {\n    const archivedTo = await archiveCorruptFile(stateDir, statePath, raw);\n    return {\n      kind: 'corrupt',",
+    "confidence": "medium"
+  },
+  {
+    "id": "R1-006",
+    "title": "archiveCounter is module-level mutable state — fragile across test isolation and long-running processes",
+    "severity": "low",
+    "category": "correctness",
+    "file": "mcp/server/src/state.ts",
+    "line_range": "14-15, 112-113",
+    "description": "The `archiveCounter` variable lives at module top-level and increments forever for the lifetime of the Node process. T-050's distinct-paths-in-same-second test passes because the counter advances even when timestamps collide. However: (a) the counter is not reset between test files, so cross-file ordering can affect archive filenames in ways tests don't currently observe; (b) in a long-running MCP server the counter grows monotonically and ends up baked into archive paths as e.g. `state.corrupt-...-194732.json` — harmless but ugly; (c) two distinct project roots in the same process share the same counter, which is fine for uniqueness but couples them implicitly.",
+    "impact": "Mostly cosmetic. The functional uniqueness guarantee A4 demands is met. Risk is that future tests that import state.ts and reset module state (e.g. via vi.resetModules) will see a reset counter and could collide if they also pin the timestamp.",
+    "recommendation": "Switch to a high-resolution timestamp (process.hrtime.bigint() suffix) or a crypto-random suffix to remove the global-counter dependency, OR scope the counter inside archiveCorruptFile via a closure / WeakMap-by-stateDir. Either approach removes the module-level mutable.",
+    "evidence": "// Monotonic counter to ensure uniqueness within the same millisecond\nlet archiveCounter = 0;",
+    "confidence": "medium"
+  },
+  {
+    "id": "R1-007",
+    "title": "Timestamp .replace(/\\./g, '.') is a no-op — likely a typo for ms-precision handling",
+    "severity": "info",
+    "category": "correctness",
+    "file": "mcp/server/src/state.ts",
+    "line_range": "106-109",
+    "description": "The archive timestamp construction calls `.replace(/\\./g, '.')` which replaces every `.` with itself — a no-op. Read literally, the author intended to do something with the millisecond separator (e.g. strip the `.123Z` suffix, or replace `.` with `-`) and either forgot to finish or copy-pasted the colon-replacement pattern incorrectly. The downstream regex in T-051 accepts the resulting filename either way, so the test passes, but the code as written reveals a partial implementation thought.",
+    "impact": "None functionally — archive filenames still match the test regex. Pure code-clarity concern; flags an incomplete edit that the consolidator should escalate to design dimension.",
+    "recommendation": "Either remove the no-op .replace, or finish the original intent (e.g. .replace(/\\./g, '-') to make `.123Z` → `-123Z`, or .replace(/\\.\\d+Z$/, 'Z') to drop ms entirely). Add a comment explaining the chosen format.",
+    "evidence": "const ts = now\n    .toISOString()\n    .replace(/:/g, '-')\n    .replace(/\\./g, '.');",
+    "confidence": "high"
+  }
+]

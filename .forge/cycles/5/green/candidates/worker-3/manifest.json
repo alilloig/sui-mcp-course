@@ -1,0 +1,19 @@
+{
+  "worker": 3,
+  "target_files": [
+    "mcp/server/src/ladder.ts",
+    "mcp/server/src/tools/requestHint.ts",
+    "mcp/server/src/schemas/phases.ts",
+    "mcp/server/src/warnings.ts"
+  ],
+  "lines_changed": 165,
+  "blocked": false,
+  "security_fixes": [
+    "C021: ladder.ts containedPath check on spot.target_file before readFile/writeFile (path.join with absolute accepts /etc/passwd)",
+    "C022: ladder.ts containedPath check on snapshot bakPath derived from spot.id (dotdot in id escapes snapshotsDir)",
+    "C012: requestHint.ts containedPath check on rungRelPath joined into paths/<slug>/ (dotdot in rungs.* reads arbitrary files)",
+    "phases.ts: SLUG_REGEX /^[a-z0-9][a-z0-9_-]*$/ validation on phase.id and spot.id at validatePhases time",
+    "phases.ts: isSafeRelativePath() rejects dotdot and absolute paths for target_file and rungs.*",
+    "warnings.ts: added 'path-traversal' to AutoWriteFailedWarning.kind_detail union"
+  ]
+}

@@ -1,0 +1,3 @@
+# Hint — Polling tick (Phase 3, Spot 1)
+
+The polling tick combines `setInterval` with the `withRetry` helper you built in phase 2. Inside the interval callback, call `deepbook.getLevel2TicksFromMid` wrapped in `withRetry(() => deepbook.getLevel2TicksFromMid(...))`. On success, update the component state with the returned ticks. On failure, catch the error and log it — the UI should keep showing the last successful data rather than crashing. Remember to clear the interval on component unmount by returning a cleanup function from `useEffect`. The polling interval in milliseconds is given by the `poll_interval_ms` personalization value.

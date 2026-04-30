@@ -1,0 +1,965 @@
+[
+  {
+    "id": "T-001",
+    "name": "registerTools registers exactly seven tools including requestHint",
+    "behavior": "After registerTools(server) is called, the server's recorded tool registrations include 'start', 'runPreflightProbe', 'selectPath', 'setPersonalization', 'nextSpot', 'verifySpot', 'requestHint' — exactly seven names, no duplicates, no extras. Asserts toolNames.length === 7 and the literal 'requestHint' is present.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/index.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A1"
+  },
+  {
+    "id": "T-002",
+    "name": "requestHint registration declares rung as z.union of literals 1, 2, 3",
+    "behavior": "The Zod schema attached to the requestHint registration rejects rung values outside {1,2,3} at parse time (e.g. 0, 4, '1', null, undefined produce parse errors); rung=1, 2, and 3 each pass schema validation. Verifies SDK-boundary rejection per A1.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/index.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A1"
+  },
+  {
+    "id": "T-003",
+    "name": "requestHint source contains exactly one 'requestHint' literal in index.ts registration",
+    "behavior": "Static grep across mcp/server/src/index.ts: the literal 'requestHint' appears exactly once at the registration site (i.e. registerTools wires it as the seventh tool). Reviewer grep target from A1.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/index.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A1"
+  },
+  {
+    "id": "T-004",
+    "name": "tools directory contains exactly seven handler files",
+    "behavior": "Counts files under mcp/server/src/tools/*.ts and asserts the count is 7 (start.ts, runPreflightProbe.ts, selectPath.ts, setPersonalization.ts, nextSpot.ts, verifySpot.ts, requestHint.ts). Reviewer grep target from A1.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A1"
+  },
+  {
+    "id": "T-005",
+    "name": "runRequestHint(rung=1) happy path returns ok:true with rendered hint payload",
+    "behavior": "With state where selected_path is set and cursor parked at p1-spot-1 (no ladder rung used), calling runRequestHint({ projectRoot, rung: 1 }) returns { ok: true, payload: <string>, newLadder } where payload is hint.md content with {{ pool_subset }} substituted from state.personalization. autoVerifyResult is absent on rung-1 invocations.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A2"
+  },
+  {
+    "id": "T-006",
+    "name": "runRequestHint(rung=1) flips state.ladder[spot.id].hint_used to true and saves",
+    "behavior": "After a successful rung-1 call, the state persisted via saveState has ladder[p1-spot-1].hint_used === true (other flags preserved as they were); newLadder in the response matches the on-disk LadderRung. AC-5.2 invariant.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A4"
+  },
+  {
+    "id": "T-007",
+    "name": "runRequestHint(rung=1) does NOT call runAutoWrite or write target_file",
+    "behavior": "Spies on fsPromises.writeFile and the ladder.runAutoWrite export. After a rung-1 call, neither the snapshots/ directory nor the target_file is touched. Only state.json (via saveState) is written.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A2"
+  },
+  {
+    "id": "T-008",
+    "name": "runRequestHint(rung=2) gated when hint_used=false returns rung-out-of-order with structured fields",
+    "behavior": "With state.ladder[p1-spot-1].hint_used === false, calling runRequestHint({ rung: 2 }) returns { ok: false, error: { kind: 'rung-out-of-order', requestedRung: 2, requiredPriorRung: 1, missingFlag: 'hint_used', message: <string> } } and saveState is NOT called (no state mutation), runAutoWrite is NOT called.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A3"
+  },
+  {
+    "id": "T-009",
+    "name": "runRequestHint(rung=2) happy path flips reference_shown to true and returns rendered reference payload",
+    "behavior": "With state.ladder[p1-spot-1].hint_used === true and reference_shown === false, calling runRequestHint({ rung: 2 }) returns { ok: true, payload: <reference.md substituted>, newLadder } and persists state.ladder[p1-spot-1].reference_shown === true. hint_used remains true (append-only).",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A4"
+  },
+  {
+    "id": "T-010",
+    "name": "runRequestHint(rung=3) gated when reference_shown=false returns rung-out-of-order with missingFlag=reference_shown",
+    "behavior": "With state.ladder[p1-spot-1].hint_used === true but reference_shown === false, calling runRequestHint({ rung: 3 }) returns { ok: false, error: { kind: 'rung-out-of-order', requestedRung: 3, requiredPriorRung: 2, missingFlag: 'reference_shown', message: <string> } }. saveState NOT called; no snapshot directory created; target_file unchanged.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A3"
+  },
+  {
+    "id": "T-011",
+    "name": "runRequestHint(rung=3) gated rejection occurs BEFORE any recordRungUse / saveState / runAutoWrite call",
+    "behavior": "Spies on saveState and the ladder seam's runAutoWrite. With reference_shown=false, the rung-3 rejection path returns immediately; assert spy.callCount === 0 for all three side-effect surfaces. Reviewer grep target from A3.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A3"
+  },
+  {
+    "id": "T-012",
+    "name": "runRequestHint(rung=1) is always callable regardless of prior ladder state",
+    "behavior": "Even when hint_used, reference_shown, auto_completed are all already true (e.g. a re-request after auto-complete), runRequestHint({ rung: 1 }) returns { ok: true, payload, newLadder } and never returns rung-out-of-order. Append-only re-flip semantics.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A3"
+  },
+  {
+    "id": "T-013",
+    "name": "runRequestHint(rung=3) happy path with verifySpot pass: snapshot written, target_file overwritten, auto_completed=true, cursor advances",
+    "behavior": "Pre: cursor at p1-spot-1, state.ladder.p1-spot-1 = { hint_used:true, reference_shown:true, auto_completed:false }, target_file fixture exists with original line 39-58 content. With a verifySpot stub returning pass:true, after runRequestHint({ rung: 3 }) the response is { ok: true, payload, newLadder, autoVerifyResult: { pass: true, advanced: true, output? } }. On disk: <projectRoot>/.sui-deepbook-course/snapshots/p1-spot-1.bak exists with the ORIGINAL bytes; target_file lines 39-58 now contain the auto.md payload (substituted); state.ladder.p1-spot-1.auto_completed === true; cursor advanced to p2-spot-1.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A5"
+  },
+  {
+    "id": "T-014",
+    "name": "runRequestHint(rung=3) sad path with verifySpot fail: side effects committed, cursor unchanged, auto_completed=true",
+    "behavior": "Same preconditions as T-013 but verifySpot stub returns pass:false. After runRequestHint({ rung: 3 }): response is { ok: true, payload, newLadder, autoVerifyResult: { pass: false, advanced: false, output? } }. Snapshot written; target_file modified; state.ladder.p1-spot-1.auto_completed === true; cursor STILL on p1-spot-1 (NOT advanced). AC-5.3 + AC-5.4.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A5"
+  },
+  {
+    "id": "T-015",
+    "name": "auto_completed remains true across a subsequent verifySpot fail on the same spot",
+    "behavior": "After T-014's setup leaves auto_completed=true with cursor unchanged: a follow-up call to runVerifySpot returning pass:false (separate call, not via requestHint) leaves state.ladder.p1-spot-1.auto_completed === true. Append-only invariant under fresh failures.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A6"
+  },
+  {
+    "id": "T-016",
+    "name": "auto_completed remains true across a subsequent verifySpot pass that advances the cursor",
+    "behavior": "After T-014's failed rung 3, the student edits target_file and calls verifySpot which now passes. Assert: { pass: true, advanced: true } returned, cursor advanced to p2-spot-1, AND state.ladder.p1-spot-1.auto_completed remains true post-advance. AC-5.4 is preserved across cursor advance.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A6"
+  },
+  {
+    "id": "T-017",
+    "name": "re-attempt after failed rung 3: subsequent verifySpot pass advances cursor exactly once",
+    "behavior": "Sequence: rung-3 fail, manual edit, verifySpot pass. Assert verifySpot returns { pass: true, advanced: true } and cursor moves from p1-spot-1 to p2-spot-1 by exactly one advance step (no double-advance). auto_completed remains true.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A8"
+  },
+  {
+    "id": "T-018",
+    "name": "second runRequestHint(rung=3) on the same spot rotates existing .bak to .bak.<timestamp> before writing new snapshot",
+    "behavior": "After a first rung-3 with verifySpot fail (cursor stays on p1-spot-1, auto_completed=true), a second rung-3 invocation with reference_shown still true: assert that <projectRoot>/.sui-deepbook-course/snapshots/p1-spot-1.bak exists (with the new pre-state) AND <projectRoot>/.sui-deepbook-course/snapshots/p1-spot-1.bak.<ISO-timestamp-no-colons> also exists (with the prior pre-state). auto_completed stays true. AC-5.4 + A7.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/ladder.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-019",
+    "name": "snapshot file is written with wx flag and mode 0o600 (durability)",
+    "behavior": "Spy on fsPromises.writeFile in ladder.ts; capture the options arg of the call writing to the .bak path. Assert flag includes 'wx' and mode === 0o600. Mirrors state.ts durability conventions per A7.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/ladder.ts",
+    "test_file": "tests/ladder.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-020",
+    "name": "snapshot directory is mkdir-recursive on first use",
+    "behavior": "With <projectRoot>/.sui-deepbook-course/snapshots/ NOT pre-existing, runAutoWrite creates it via fsPromises.mkdir({ recursive: true }) before writing the .bak. Verify directory exists post-call and a writeFile spy ordering shows mkdir followed by writeFile.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/ladder.ts",
+    "test_file": "tests/ladder.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-021",
+    "name": "snapshot path is exactly <projectRoot>/.sui-deepbook-course/snapshots/<spot.id>.bak (no substitution)",
+    "behavior": "Even when state.personalization carries a key collision (e.g. personalization.spot_id) or the spot.id contains characters like '-', the snapshot path stays literal: <projectRoot>/.sui-deepbook-course/snapshots/p1-spot-1.bak. No {{ ... }} substitution applied to the path.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/ladder.ts",
+    "test_file": "tests/ladder.test.ts",
+    "covers_contract_requirement": "A10"
+  },
+  {
+    "id": "T-022",
+    "name": "outputStyleOk gate at requestHint short-circuits with output-style-disabled and zero writes",
+    "behavior": "With probeOutputStyle stubbed to return { ok: false }, runRequestHint({ rung: 1 }) returns { ok: false, error: { kind: 'output-style-disabled', message: <string> } }. Spies on fsPromises.writeFile, fsPromises.rename, fsPromises.mkdir confirm zero writes (no state mutation, no snapshot, no target_file overwrite). loadState is NOT called either (gate runs first).",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A13"
+  },
+  {
+    "id": "T-023",
+    "name": "state-save-failed on rung 1: saveState rejection surfaces structured error and ladder is NOT flipped on disk",
+    "behavior": "With saveState stubbed to reject with EACCES, runRequestHint({ rung: 1 }) returns { ok: false, error: { kind: 'state-save-failed', message: <string containing EACCES> } }. The on-disk state.json (if pre-existing) still has hint_used === false (reverted because rename failed before commit). M002 carry-forward at requestHint boundary.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A12"
+  },
+  {
+    "id": "T-024",
+    "name": "state-save-failed on rung 3: saveState rejection after auto-write surfaces error",
+    "behavior": "With rung-3 preconditions met and saveState stubbed to reject after the snapshot+overwrite block, runRequestHint({ rung: 3 }) returns { ok: false, error: { kind: 'state-save-failed', message: <string> } }. The snapshot file IS written and target_file IS overwritten (per documented step ordering); but the response does not claim auto_completed=true since the persist failed.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A12"
+  },
+  {
+    "id": "T-025",
+    "name": "no-state branch: loadState returns kind:absent → response { ok: false, error.kind:'no-state' }",
+    "behavior": "With loadState stubbed to return { kind: 'absent' }, runRequestHint({ rung: 1 }) returns { ok: false, error: { kind: 'no-state', message: <string> } } and writes nothing.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A2"
+  },
+  {
+    "id": "T-026",
+    "name": "no-path-selected branch: state has no selected_path → response { ok: false, error.kind:'no-path-selected' }",
+    "behavior": "With loadState returning { kind: 'ok', state: { selected_path: undefined, ... } }, runRequestHint returns { ok: false, error: { kind: 'no-path-selected', message: ... } } and writes nothing.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A2"
+  },
+  {
+    "id": "T-027",
+    "name": "state-corrupt branch: loadState returns kind:corrupt → response { ok: false, error.kind:'state-corrupt' }",
+    "behavior": "With loadState stubbed to return { kind: 'corrupt', archivedAs: ... }, runRequestHint returns { ok: false, error: { kind: 'state-corrupt', message } } and writes nothing.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A2"
+  },
+  {
+    "id": "T-028",
+    "name": "state-schema-mismatch branch: loadState returns kind:schema-mismatch → response { ok: false, error.kind:'state-schema-mismatch' }",
+    "behavior": "With loadState returning { kind: 'schema-mismatch', found, expected }, runRequestHint returns { ok: false, error: { kind: 'state-schema-mismatch', message } } and writes nothing.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A2"
+  },
+  {
+    "id": "T-029",
+    "name": "phases-load-failed branch: phases.json missing or malformed surfaces { ok: false, error.kind:'phases-load-failed' }",
+    "behavior": "With a fixture where paths/01-orderbook-viewer/phases.json is removed (or contains invalid JSON), runRequestHint returns { ok: false, error: { kind: 'phases-load-failed', message } } and writes nothing.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A2"
+  },
+  {
+    "id": "T-030",
+    "name": "no-active-spot branch: cursor is done → response { ok: false, error.kind:'no-active-spot' }",
+    "behavior": "With state.cursor positioned past the last spot (getCurrentSpot returns done:true), runRequestHint({ rung: 1 }) returns { ok: false, error: { kind: 'no-active-spot', message } } and writes nothing. Cycle-4 cursor-done sentinel deferral still gates rung-3 here.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A2"
+  },
+  {
+    "id": "T-031",
+    "name": "rung-content-missing for rung 3: auto.md absent → no side effects",
+    "behavior": "With paths/01-orderbook-viewer/rungs/p1-spot-1/auto.md temporarily renamed (or absent), runRequestHint({ rung: 3 }) returns { ok: false, error: { kind: 'rung-content-missing', message: <path-mentioning string> } }. Critical: NO snapshot file is created and NO target_file overwrite occurs (read-first ordering per contract Behavior). state.ladder.auto_completed remains false.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A2"
+  },
+  {
+    "id": "T-032",
+    "name": "rung-content-missing for rung 1: hint.md absent returns same kind without state mutation",
+    "behavior": "With hint.md absent, runRequestHint({ rung: 1 }) returns { ok: false, error: { kind: 'rung-content-missing', message } }. saveState NOT called.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A2"
+  },
+  {
+    "id": "T-033",
+    "name": "auto-write-failed branch: target_file missing on rung 3 returns auto-write-failed with no state mutation",
+    "behavior": "With paths fixture intact but <projectRoot>/src/App.tsx not present, rung-3 invocation returns { ok: false, error: { kind: 'auto-write-failed', message } }. No snapshot, no state.ladder.auto_completed flip on disk.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A2"
+  },
+  {
+    "id": "T-034",
+    "name": "rung-3 payload is substituted via substitutePromptOnly before write",
+    "behavior": "Setup state.personalization = { pool_subset: 'DEEP_SUI', poll_interval_ms: 5000 } and an auto.md that contains the marker '{{ pool_subset }}'. After rung 3, target_file's modified region contains 'DEEP_SUI' and contains zero literal '{{ pool_subset }}' substrings. Cycle 4 A7 carry-forward at requestHint surface.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A10"
+  },
+  {
+    "id": "T-035",
+    "name": "requestHint.ts source contains zero kind:'shell' literals (single or double quoted)",
+    "behavior": "Static grep across mcp/server/src/tools/requestHint.ts for the regex /kind:\\s*['\"]shell['\"]/. Asserts match count === 0. Cycle 1 A14 / cycle 3 A12 / cycle 4 A11(a) carry-forward to the new tool surface.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A9"
+  },
+  {
+    "id": "T-036",
+    "name": "ladder.ts source contains zero kind:'shell' literals",
+    "behavior": "Static grep across mcp/server/src/ladder.ts for the regex /kind:\\s*['\"]shell['\"]/. Match count === 0. Auto-write happens via fsPromises.writeFile, never a shell action.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/ladder.ts",
+    "test_file": "tests/ladder.test.ts",
+    "covers_contract_requirement": "A9"
+  },
+  {
+    "id": "T-037",
+    "name": "every requestHint response branch serializes without kind:shell anywhere in the tree",
+    "behavior": "For each documented response branch (rung-1 ok, rung-2 ok, rung-3 ok pass, rung-3 ok fail, output-style-disabled, no-state, no-path-selected, state-corrupt, state-schema-mismatch, state-save-failed, no-active-spot, rung-out-of-order, phases-load-failed, rung-content-missing, auto-write-failed), serialize the response to JSON and assert no nested object has { kind: 'shell' }. Defense-in-depth across the discriminated union.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A9"
+  },
+  {
+    "id": "T-038",
+    "name": "requestHint.ts and ladder.ts contain zero {{ … }} substitution markers in source code",
+    "behavior": "Static grep across mcp/server/src/tools/requestHint.ts and mcp/server/src/ladder.ts for the regex /\\{\\{\\s*[a-zA-Z_]/. Match count === 0 in each file. The only legitimate carriers of that syntax are payload bodies under paths/, not the engine code.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/ladder.ts",
+    "test_file": "tests/ladder.test.ts",
+    "covers_contract_requirement": "A10"
+  },
+  {
+    "id": "T-039",
+    "name": "requestHint source contains zero 'auto_completed = false' assignments",
+    "behavior": "Static grep across mcp/server/src/tools/requestHint.ts for the regex /auto_completed\\s*=\\s*false/. Match count === 0. Append-only AC-5.4 invariant.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A6"
+  },
+  {
+    "id": "T-040",
+    "name": "ladder.ts source contains zero 'auto_completed = false' assignments",
+    "behavior": "Static grep across mcp/server/src/ladder.ts for /auto_completed\\s*=\\s*false/. Match count === 0.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/ladder.ts",
+    "test_file": "tests/ladder.test.ts",
+    "covers_contract_requirement": "A6"
+  },
+  {
+    "id": "T-041",
+    "name": "ladder.ts contains exactly two writeFile call sites",
+    "behavior": "Static grep across mcp/server/src/ladder.ts for occurrences of writeFile call sites (matching /\\bwriteFile\\s*\\(/). Asserts exactly 2 (one for the .bak snapshot, one for the target_file overwrite). Reviewer grep target.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/ladder.ts",
+    "test_file": "tests/ladder.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-042",
+    "name": "recordRungUse(state, spotId, 1) flips hint_used to true and preserves other flags",
+    "behavior": "Given input state with ladder[spotId] = { hint_used:false, reference_shown:true, auto_completed:false, auto_write_attempted:false }, recordRungUse returns a new State whose ladder[spotId].hint_used === true AND reference_shown stays true AND auto_completed stays false AND auto_write_attempted stays false. Returns a new object reference (does not mutate input).",
+    "kind": "unit",
+    "target_file": "mcp/server/src/ladder.ts",
+    "test_file": "tests/ladder.test.ts",
+    "covers_contract_requirement": "A4"
+  },
+  {
+    "id": "T-043",
+    "name": "recordRungUse(state, spotId, 2) flips reference_shown to true and preserves other flags",
+    "behavior": "Input ladder[spotId] = { hint_used:true, reference_shown:false, auto_completed:false, auto_write_attempted:false }; output has reference_shown===true and hint_used stays true.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/ladder.ts",
+    "test_file": "tests/ladder.test.ts",
+    "covers_contract_requirement": "A4"
+  },
+  {
+    "id": "T-044",
+    "name": "recordRungUse(state, spotId, 3) flips BOTH auto_completed AND auto_write_attempted to true",
+    "behavior": "Input ladder[spotId] = { hint_used:true, reference_shown:true, auto_completed:false, auto_write_attempted:false }; output has auto_completed===true AND auto_write_attempted===true. Other flags preserved.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/ladder.ts",
+    "test_file": "tests/ladder.test.ts",
+    "covers_contract_requirement": "A4"
+  },
+  {
+    "id": "T-045",
+    "name": "recordRungUse never clears a flag (regression: input with all flags true → output with all flags true)",
+    "behavior": "Input ladder[spotId] = { hint_used:true, reference_shown:true, auto_completed:true, auto_write_attempted:true }; for rung in [1,2,3] independently: recordRungUse returns a state where all four flags remain true. Append-only AC-5.2 / AC-5.4 enforcement at the seam.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/ladder.ts",
+    "test_file": "tests/ladder.test.ts",
+    "covers_contract_requirement": "A4"
+  },
+  {
+    "id": "T-046",
+    "name": "recordRungUse creates a default-all-false ladder rung when spot has no entry yet",
+    "behavior": "Input ladder = {} (no entry for spotId). recordRungUse(state, spotId, 1) returns ladder[spotId] = { hint_used:true, reference_shown:false, auto_completed:false, auto_write_attempted:false }. Same shape for rungs 2 and 3 (with the corresponding flag(s) set).",
+    "kind": "unit",
+    "target_file": "mcp/server/src/ladder.ts",
+    "test_file": "tests/ladder.test.ts",
+    "covers_contract_requirement": "A4"
+  },
+  {
+    "id": "T-047",
+    "name": "recordRungUse does not mutate the input state object",
+    "behavior": "Capture a deep clone of the input state before the call; assert deep-equal after the call. The returned state is a separate object reference whose ladder is a separate object.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/ladder.ts",
+    "test_file": "tests/ladder.test.ts",
+    "covers_contract_requirement": "A4"
+  },
+  {
+    "id": "T-048",
+    "name": "canAdvanceRung rung 1 always returns ok:true regardless of ladder state",
+    "behavior": "For all 8 combinations of {hint_used, reference_shown, auto_completed} ∈ {true,false}^3, canAdvanceRung(state, spotId, 1) returns { ok: true }.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/ladder.ts",
+    "test_file": "tests/ladder.test.ts",
+    "covers_contract_requirement": "A3"
+  },
+  {
+    "id": "T-049",
+    "name": "canAdvanceRung rung 2 returns ok:true iff hint_used === true",
+    "behavior": "With hint_used=true, returns { ok: true } regardless of other flags. With hint_used=false (or ladder entry missing), returns { ok: false, missingFlag: 'hint_used', requiredPriorRung: 1 }.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/ladder.ts",
+    "test_file": "tests/ladder.test.ts",
+    "covers_contract_requirement": "A3"
+  },
+  {
+    "id": "T-050",
+    "name": "canAdvanceRung rung 3 returns ok:true iff reference_shown === true",
+    "behavior": "With reference_shown=true, returns { ok: true } regardless of other flags. With reference_shown=false (or ladder entry missing), returns { ok: false, missingFlag: 'reference_shown', requiredPriorRung: 2 }.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/ladder.ts",
+    "test_file": "tests/ladder.test.ts",
+    "covers_contract_requirement": "A3"
+  },
+  {
+    "id": "T-051",
+    "name": "runAutoWrite happy path: snapshots existing range, overwrites target_file with payload, returns backupPath and bytesWritten",
+    "behavior": "Setup target_file with 100 lines of distinct content; spot.target_range='10-15'; payload='NEW1\\nNEW2\\nNEW3\\nNEW4\\nNEW5\\nNEW6'. After runAutoWrite: <projectRoot>/.sui-deepbook-course/snapshots/<spot.id>.bak contains exactly the original lines 10-15 joined by \\n; target_file lines 10-15 contain payload content; lines 1-9 and 16-100 unchanged. Return value: { backupPath: '<projectRoot>/.sui-deepbook-course/snapshots/<spot.id>.bak', bytesWritten: <number greater than 0> }.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/ladder.ts",
+    "test_file": "tests/ladder.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-052",
+    "name": "runAutoWrite second call rotates existing .bak to .bak.<ISO-timestamp-no-colons>",
+    "behavior": "Pre: <spot.id>.bak already exists with content 'PRIOR'. Call runAutoWrite. Post: <spot.id>.bak exists with the new pre-state bytes; <spot.id>.bak.<timestamp> exists with content 'PRIOR'. Timestamp matches /^\\d{4}-\\d{2}-\\d{2}T\\d{2}\\d{2}\\d{2}/ (no colons).",
+    "kind": "unit",
+    "target_file": "mcp/server/src/ladder.ts",
+    "test_file": "tests/ladder.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-053",
+    "name": "runAutoWrite rejects with AutoWriteError kind:'target-file-missing' on ENOENT",
+    "behavior": "Setup target_file path that does not exist. runAutoWrite throws/rejects with AutoWriteError whose kind === 'target-file-missing'. No snapshot directory created.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/ladder.ts",
+    "test_file": "tests/ladder.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-054",
+    "name": "runAutoWrite rejects with AutoWriteError kind:'target-range-invalid' on malformed target_range",
+    "behavior": "Setup spot.target_range = 'abc-xyz' (and separately '10-5' inverted, '0-5' below 1, '99999-99999' beyond file length). For each, runAutoWrite rejects with AutoWriteError whose kind === 'target-range-invalid'. No snapshot, no overwrite.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/ladder.ts",
+    "test_file": "tests/ladder.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-055",
+    "name": "runAutoWrite rejects with AutoWriteError kind:'snapshot-write-failed' when .bak write fails",
+    "behavior": "Stub fsPromises.writeFile to reject with EACCES on the .bak path only. runAutoWrite rejects with AutoWriteError whose kind === 'snapshot-write-failed'. Critical: target_file is NOT modified (snapshot-first ordering).",
+    "kind": "unit",
+    "target_file": "mcp/server/src/ladder.ts",
+    "test_file": "tests/ladder.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-056",
+    "name": "runAutoWrite rejects with AutoWriteError kind:'overwrite-failed' when target_file write fails after successful snapshot",
+    "behavior": "Stub fsPromises.writeFile to succeed for the .bak path but reject with EACCES on the target_file path. runAutoWrite rejects with AutoWriteError kind === 'overwrite-failed'. The snapshot file IS present on disk (durability invariant — snapshot is committed before overwrite begins).",
+    "kind": "unit",
+    "target_file": "mcp/server/src/ladder.ts",
+    "test_file": "tests/ladder.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-057",
+    "name": "runAutoWrite snapshot-then-overwrite ordering: writeFile call order is .bak first, target_file second",
+    "behavior": "Spy on fsPromises.writeFile; record the order of paths written. Assert the first call's path matches /\\.bak$/ (or .bak.<ts>) and the second call's path is the target_file path. Order matters per the durability contract.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/ladder.ts",
+    "test_file": "tests/ladder.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-058",
+    "name": "runAutoWrite uses 1-indexed inclusive line range (39-58 covers exactly 20 lines)",
+    "behavior": "Setup target_file with 100 lines, target_range='39-58'. Snapshot file content has exactly 20 lines (lines 39 through 58 inclusive); the substituted output replaces those 20 lines with the payload's lines.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/ladder.ts",
+    "test_file": "tests/ladder.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-059",
+    "name": "course-conductor.md exists at agents/course-conductor.md",
+    "behavior": "Static fs.existsSync check on <REPO_ROOT>/agents/course-conductor.md returns true.",
+    "kind": "unit",
+    "target_file": "agents/course-conductor.md",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A16"
+  },
+  {
+    "id": "T-060",
+    "name": "course-conductor.md mentions all three rungs by name (hint, reference, auto)",
+    "behavior": "Read agents/course-conductor.md as utf8; assert the body contains the strings 'hint' AND 'reference' AND 'auto' (case-insensitive). The conductor agent body verbally describes all three rungs.",
+    "kind": "unit",
+    "target_file": "agents/course-conductor.md",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A16"
+  },
+  {
+    "id": "T-061",
+    "name": "course-conductor.md does not declare Bash as an allowed tool",
+    "behavior": "Read agents/course-conductor.md; assert that any frontmatter 'tools:' declaration either omits Bash entirely or is an empty list. Concretely: the regex /tools:\\s*\\[\\s*\\]/ matches OR no Bash is mentioned in the tools field. The agent never invokes Bash to perform auto-write.",
+    "kind": "unit",
+    "target_file": "agents/course-conductor.md",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A16"
+  },
+  {
+    "id": "T-062",
+    "name": "course-conductor.md disclaims direct shell side effects for rung 3",
+    "behavior": "Read the file; assert it contains a passage explicitly stating that rung-3 auto-write routes through requestHint MCP and NOT a Bash tool. Match a sentence containing 'requestHint' AND ('shell' OR 'Bash' OR 'side channel') with the disclaiming framing.",
+    "kind": "unit",
+    "target_file": "agents/course-conductor.md",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A16"
+  },
+  {
+    "id": "T-063",
+    "name": "verifySpot wraps VerificationModeUnsupportedError with structured failure",
+    "behavior": "Given a phases.json fixture where verification.mode = 'test' and runVerification stub configured to throw VerificationModeUnsupportedError('test'), runVerifySpot returns { pass: false, error: <string matching /verification mode 'test' not yet supported/i>, advanced: false } and does NOT propagate the throw out of the MCP boundary. M001 carry-forward.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/verifySpot.ts",
+    "test_file": "tests/verifySpot.test.ts",
+    "covers_contract_requirement": "A11"
+  },
+  {
+    "id": "T-064",
+    "name": "verifySpot wraps saveState rejection on the pass branch with state-save-failed error",
+    "behavior": "With runVerification returning pass:true and saveState stubbed to reject EACCES, runVerifySpot returns { pass: true, output, advanced: false, error: <string matching /verification passed but state persist failed/i and containing the EACCES message> }. The cursor did NOT advance on disk (the rejected rename means no commit).",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/verifySpot.ts",
+    "test_file": "tests/verifySpot.test.ts",
+    "covers_contract_requirement": "A12"
+  },
+  {
+    "id": "T-065",
+    "name": "verifySpot outputStyleOk gate short-circuits with output-style-disabled and zero state writes",
+    "behavior": "With probeOutputStyle stubbed to return { ok: false }, runVerifySpot returns { pass: false, error: 'output-style-disabled', advanced: false }. Spy on fsPromises.writeFile/rename confirms zero writes; no state mutation occurred.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/verifySpot.ts",
+    "test_file": "tests/verifySpot.test.ts",
+    "covers_contract_requirement": "A13"
+  },
+  {
+    "id": "T-066",
+    "name": "verifySpot outputStyleOk gate runs BEFORE loadState and runVerification",
+    "behavior": "With outputStyleOk=false and a loadState spy + runVerification spy, after runVerifySpot returns: loadState.callCount === 0 AND runVerification.callCount === 0. The gate is at the top of the handler.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/verifySpot.ts",
+    "test_file": "tests/verifySpot.test.ts",
+    "covers_contract_requirement": "A13"
+  },
+  {
+    "id": "T-067",
+    "name": "selectPath wraps saveState rejection with structured errors and writes nothing observable",
+    "behavior": "With saveState stubbed to reject EACCES, selectPath({ projectRoot, slug:'01-orderbook-viewer' }) returns { ok: false, errors: [<string matching /state-save-failed:/ and containing EACCES>] }. No fs.writeFileSync to state.json on disk (rename failed; tmp file may be cleaned but committed state is absent). M002 carry-forward.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/selectPath.ts",
+    "test_file": "tests/selectPath.test.ts",
+    "covers_contract_requirement": "A12"
+  },
+  {
+    "id": "T-068",
+    "name": "selectPath outputStyleOk gate returns ok:false errors:['output-style-disabled'] with zero state mutation",
+    "behavior": "With probeOutputStyle returning { ok: false }, selectPath returns { ok: false, errors: ['output-style-disabled'] } and spies on fsPromises.writeFile / fsPromises.rename / fsPromises.mkdir confirm zero writes inside <projectRoot>/.sui-deepbook-course/. AC-1.3 invariant extends to selectPath.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/selectPath.ts",
+    "test_file": "tests/selectPath.test.ts",
+    "covers_contract_requirement": "A13"
+  },
+  {
+    "id": "T-069",
+    "name": "selectPath outputStyleOk gate runs before loadState",
+    "behavior": "With outputStyleOk=false, selectPath returns the gated result without calling loadState. Spy on the mocked loadState confirms callCount === 0.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/selectPath.ts",
+    "test_file": "tests/selectPath.test.ts",
+    "covers_contract_requirement": "A13"
+  },
+  {
+    "id": "T-070",
+    "name": "setPersonalization wraps saveState rejection with structured errors",
+    "behavior": "With selected_path set in state and saveState stubbed to reject EACCES, setPersonalization with valid values returns { ok: false, errors: [<string matching /state-save-failed:/>] } alongside (or instead of) any validation errors. M002 carry-forward.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/setPersonalization.ts",
+    "test_file": "tests/setPersonalization.test.ts",
+    "covers_contract_requirement": "A12"
+  },
+  {
+    "id": "T-071",
+    "name": "setPersonalization outputStyleOk gate returns ok:false errors:['output-style-disabled'] with zero writes",
+    "behavior": "With probeOutputStyle returning { ok: false }, setPersonalization returns { ok: false, errors: ['output-style-disabled'] } and writes zero bytes under .sui-deepbook-course/.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/setPersonalization.ts",
+    "test_file": "tests/setPersonalization.test.ts",
+    "covers_contract_requirement": "A13"
+  },
+  {
+    "id": "T-072",
+    "name": "nextSpot outputStyleOk gate returns done:false with error:'output-style-disabled' and zero writes",
+    "behavior": "With probeOutputStyle returning { ok: false }, nextSpot returns a structured response with done:false and an optional error field 'output-style-disabled'. Spies confirm zero state writes (nextSpot has no saveState anyway). The non-gated return shape is preserved on the happy path.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/nextSpot.ts",
+    "test_file": "tests/nextSpot.test.ts",
+    "covers_contract_requirement": "A13"
+  },
+  {
+    "id": "T-073",
+    "name": "nextSpot outputStyleOk gate runs before loadState",
+    "behavior": "With outputStyleOk=false, the loadState spy registers callCount === 0 after nextSpot returns. The gate is the first thing the handler does.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/nextSpot.ts",
+    "test_file": "tests/nextSpot.test.ts",
+    "covers_contract_requirement": "A13"
+  },
+  {
+    "id": "T-074",
+    "name": "parseCommand('pnpm build') returns cmd:'pnpm', args:['build']",
+    "behavior": "verify.ts's exported parseCommand helper handles the simple two-token case identically to the prior split(' ') behavior.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/verify.ts",
+    "test_file": "tests/verify.test.ts",
+    "covers_contract_requirement": "A14"
+  },
+  {
+    "id": "T-075",
+    "name": "parseCommand('pnpm run build') returns cmd:'pnpm', args:['run','build']",
+    "behavior": "Three-token case with no quoting.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/verify.ts",
+    "test_file": "tests/verify.test.ts",
+    "covers_contract_requirement": "A14"
+  },
+  {
+    "id": "T-076",
+    "name": "parseCommand handles double-quoted args with internal spaces",
+    "behavior": "parseCommand('pnpm \"build with spaces\" -x') returns { cmd: 'pnpm', args: ['build with spaces', '-x'] }. Double-quoted segments are kept as a single arg with internal spaces preserved; the surrounding quotes are stripped.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/verify.ts",
+    "test_file": "tests/verify.test.ts",
+    "covers_contract_requirement": "A14"
+  },
+  {
+    "id": "T-077",
+    "name": "parseCommand collapses runs of whitespace",
+    "behavior": "parseCommand('   pnpm   build   ') returns { cmd: 'pnpm', args: ['build'] }. Leading, trailing, and internal whitespace runs are normalized away.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/verify.ts",
+    "test_file": "tests/verify.test.ts",
+    "covers_contract_requirement": "A14"
+  },
+  {
+    "id": "T-078",
+    "name": "parseCommand('') throws an Error",
+    "behavior": "Empty input is invalid; parseCommand throws an Error (any Error subclass; message non-empty).",
+    "kind": "unit",
+    "target_file": "mcp/server/src/verify.ts",
+    "test_file": "tests/verify.test.ts",
+    "covers_contract_requirement": "A14"
+  },
+  {
+    "id": "T-079",
+    "name": "parseCommand('   ') throws an Error",
+    "behavior": "Whitespace-only input is invalid; parseCommand throws an Error.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/verify.ts",
+    "test_file": "tests/verify.test.ts",
+    "covers_contract_requirement": "A14"
+  },
+  {
+    "id": "T-080",
+    "name": "verify.ts source contains zero literal command.split(' ') occurrences",
+    "behavior": "Static grep across mcp/server/src/verify.ts for the literal command.split(' '). Match count === 0. Reviewer grep target from A14.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/verify.ts",
+    "test_file": "tests/verify.test.ts",
+    "covers_contract_requirement": "A14"
+  },
+  {
+    "id": "T-081",
+    "name": "compile adapter consumes parseCommand output (integration spawn assertion)",
+    "behavior": "With phases.json verification.command = 'pnpm \"build dir\" -x' and runVerification compile-mode dispatch, the spawned child_process.spawn receives cmd='pnpm' and argv=['build dir', '-x'] (single second-arg array). Exercise via spawn spy.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/verify.ts",
+    "test_file": "tests/verify.test.ts",
+    "covers_contract_requirement": "A14"
+  },
+  {
+    "id": "T-082",
+    "name": "checkManifest fetch is called with an AbortSignal whose timeout fires within 5-6s",
+    "behavior": "Spy on global fetch; call checkManifest. Capture the second argument (RequestInit). Assert init.signal is an AbortSignal AND its lifecycle indicates a 5000ms timeout (e.g. by waiting 5.5s with a never-resolving fetch and observing the captured signal.aborted becomes true within 5-6s).",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/manifest.ts",
+    "test_file": "tests/runPreflightProbe.test.ts",
+    "covers_contract_requirement": "A15"
+  },
+  {
+    "id": "T-083",
+    "name": "checkManifest with never-resolving fetch rejects within 6 seconds and surfaces pass:false",
+    "behavior": "Stub global fetch to return a Promise that never resolves AND respects AbortSignal (rejects with AbortError when signal aborts). Time the runPreflightProbe call for the manifest probe: it must complete within 6000ms and return { pass: false, message: <string> }.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/manifest.ts",
+    "test_file": "tests/runPreflightProbe.test.ts",
+    "covers_contract_requirement": "A15"
+  },
+  {
+    "id": "T-084",
+    "name": "checkManifest happy path is unaffected by the timeout (still passes when fetch resolves quickly)",
+    "behavior": "With fetch stub returning a 200 response within 50ms, runPreflightProbe for the manifest probe returns { pass: true, ... }. Regression: timeout doesn't break the happy path.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/manifest.ts",
+    "test_file": "tests/runPreflightProbe.test.ts",
+    "covers_contract_requirement": "A15"
+  },
+  {
+    "id": "T-085",
+    "name": "warnings.ts exports state-save-failed kind",
+    "behavior": "Static grep across mcp/server/src/warnings.ts for the literal 'state-save-failed' (in the EngineWarning union). Match count >= 1.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/warnings.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A12"
+  },
+  {
+    "id": "T-086",
+    "name": "warnings.ts exports auto-write-failed kind",
+    "behavior": "Static grep across mcp/server/src/warnings.ts for the literal 'auto-write-failed'. Match count >= 1.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/warnings.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A12"
+  },
+  {
+    "id": "T-087",
+    "name": "warnings.ts exports output-style-disabled kind",
+    "behavior": "Static grep across mcp/server/src/warnings.ts for the literal 'output-style-disabled'. Match count >= 1.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/warnings.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A13"
+  },
+  {
+    "id": "T-088",
+    "name": "registry warning kinds remain exactly the eight registry.ts emits (cycle-4 A12 carry-forward)",
+    "behavior": "Static grep across mcp/server/src/registry.ts for warning kinds emitted via EngineWarning literal-kind strings; assert the set of distinct kinds emitted matches the cycle-4 baseline of exactly 8 kinds. The new cycle-5 kinds (state-save-failed, auto-write-failed, output-style-disabled) are NOT emitted from registry.ts.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/warnings.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A17"
+  },
+  {
+    "id": "T-089",
+    "name": "engine code outside paths/ and tests/fixtures/ contains zero '01-orderbook-viewer' string literals",
+    "behavior": "Recursive grep across mcp/server/src/**/*.ts (excluding paths/ and tests/fixtures/) for the literal '01-orderbook-viewer'. Match count === 0. Cycle 1 A10/A21 carry-forward.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A17"
+  },
+  {
+    "id": "T-090",
+    "name": "engine code contains zero setSpawnOverride / setVerifyOverride symbols",
+    "behavior": "Recursive grep across mcp/server/src/**/*.ts for the literals 'setSpawnOverride' and 'setVerifyOverride'. Match count === 0 for each. Cycle 4 A13 + H001 remediation carry-forward.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A17"
+  },
+  {
+    "id": "T-091",
+    "name": "kind:'shell' literal is confined to runPreflightProbe.ts in engine code",
+    "behavior": "Recursive grep across mcp/server/src/**/*.ts for /kind:\\s*['\"]shell['\"]/. Asserts every match originates in mcp/server/src/tools/runPreflightProbe.ts. No matches in requestHint.ts, ladder.ts, verifySpot.ts, selectPath.ts, setPersonalization.ts, nextSpot.ts.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A17"
+  },
+  {
+    "id": "T-092",
+    "name": "personalization.ts substitutePromptOnly remains the only {{ … }} resolver in engine code",
+    "behavior": "Static grep across mcp/server/src/**/*.ts (excluding personalization.ts itself) for any function or method that pattern-matches /\\{\\{[^}]+\\}\\}/ and replaces. Match count === 0. New ladder.ts and requestHint.ts consume substitutePromptOnly but do not implement parallel substitution. Cycle 4 A7 carry-forward.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A17"
+  },
+  {
+    "id": "T-093",
+    "name": "STATE_SCHEMA_VERSION remains at 1 after cycle 5",
+    "behavior": "Read mcp/server/src/state.ts; assert the exported STATE_SCHEMA_VERSION value is 1. Cycle 5 makes no breaking schema changes per A18.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A18"
+  },
+  {
+    "id": "T-094",
+    "name": "existing state.json with auto_write_attempted absent loads to kind:'ok' (back-compat)",
+    "behavior": "Write a state.json file (cycle 4 shape, missing auto_write_attempted field on ladder rungs). Call loadState(projectRoot). Result kind === 'ok'; ladder rung's auto_write_attempted defaults to false (or is absent and tolerated). No archive written, no schema-mismatch.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A18"
+  },
+  {
+    "id": "T-095",
+    "name": "rung-3 sets BOTH auto_completed AND auto_write_attempted to true on disk",
+    "behavior": "After a rung-3 successful invocation, the persisted state.json contains ladder.p1-spot-1.auto_completed === true AND ladder.p1-spot-1.auto_write_attempted === true. Cycle-4 schema field is wired by cycle-5 logic per A18.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A18"
+  },
+  {
+    "id": "T-096",
+    "name": "E-004 traversal: cold-start through three rungs to cursor advance via harness MCP transport",
+    "behavior": "Integration via the harness MCP transport (with withVerifyStub returning fail for the first three verifySpot calls and pass for the post-rung-3 auto-verification). Walk the full sequence (verifySpot → requestHint(1) → verifySpot → requestHint(2) → verifySpot → requestHint(3)); assert: hint_used flips to true after rung 1; reference_shown flips to true after rung 2; on rung 3 the snapshot file at .sui-deepbook-course/snapshots/p1-spot-1.bak exists; src/App.tsx lines 39-58 contain the substituted auto.md payload; auto_completed flips to true; cursor advances to p2-spot-1; the rung-3 response's autoVerifyResult === { pass: true, advanced: true }.",
+    "kind": "integration",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/harness.lesson.test.ts",
+    "covers_contract_requirement": "A2"
+  },
+  {
+    "id": "T-097",
+    "name": "E-004 post-rung-3 state survives a session restart (auto_completed permanence)",
+    "behavior": "After T-096's setup, tear down the harness; re-instantiate; reload state via the new harness's start tool. Assert state.ladder.p1-spot-1.auto_completed === true after the restart. AC-5.4 across session boundary.",
+    "kind": "integration",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/harness.lesson.test.ts",
+    "covers_contract_requirement": "A6"
+  },
+  {
+    "id": "T-098",
+    "name": "E-004 rung-3 verification failure path: side effects committed, cursor unchanged, follow-up edit+verifySpot advances cursor",
+    "behavior": "Integration: with withVerifyStub set to fail on the rung-3 auto-verify, walk the sequence rung1→rung2→rung3. Assert cursor STAYS on p1-spot-1; auto_completed === true; snapshot file exists; target_file is modified. Then switch withVerifyStub to pass, call verifySpot directly; assert cursor advances to p2-spot-1 and auto_completed remains true. AC-5.4 + AC-5.3 + A8 carry-forward in the harness.",
+    "kind": "integration",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/harness.lesson.test.ts",
+    "covers_contract_requirement": "A8"
+  },
+  {
+    "id": "T-099",
+    "name": "outputStyleOk gate across all five tools writes zero bytes under .sui-deepbook-course/",
+    "behavior": "Integration: with probeOutputStyle stubbed to return ok:false, call selectPath, setPersonalization, nextSpot, verifySpot, requestHint in sequence (each through the MCP transport). Spy on fsPromises.writeFile, fsPromises.rename, fsPromises.mkdir for paths matching <projectRoot>/.sui-deepbook-course/. Assert spy.callCount === 0 across all five calls. AC-1.3 invariant extends to the full tool surface per A13.",
+    "kind": "integration",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/harness.lesson.test.ts",
+    "covers_contract_requirement": "A13"
+  },
+  {
+    "id": "T-100",
+    "name": "harness.requestHint helper asserts response carries no shell action",
+    "behavior": "scripts/e2e/harness.ts's new requestHint helper, when invoked, verifies the response JSON contains no nested object with kind === 'shell'. The helper throws a descriptive error if a shell action appears anywhere in the response tree.",
+    "kind": "integration",
+    "target_file": "scripts/e2e/harness.ts",
+    "test_file": "tests/harness.lesson.test.ts",
+    "covers_contract_requirement": "A9"
+  },
+  {
+    "id": "T-101",
+    "name": "harness.withRungContentMissing(spotId) temporarily renames auto.md and restores on cleanup",
+    "behavior": "The harness fixture helper withRungContentMissing('p1-spot-1') renames paths/01-orderbook-viewer/rungs/p1-spot-1/auto.md to a sidecar before the test body runs and restores it after. While inside the helper's scope, runRequestHint({ rung: 3 }) returns { ok: false, error: { kind: 'rung-content-missing' } }. After the helper's cleanup, the original file is back at its canonical path.",
+    "kind": "integration",
+    "target_file": "scripts/e2e/harness.ts",
+    "test_file": "tests/harness.lesson.test.ts",
+    "covers_contract_requirement": "A2"
+  },
+  {
+    "id": "T-102",
+    "name": "rung-3 read-first ordering: rung-content-missing returns BEFORE any snapshot side effect",
+    "behavior": "With auto.md absent, rung-3 invocation returns rung-content-missing. Critically: <projectRoot>/.sui-deepbook-course/snapshots/ directory was NOT created (mkdir spy callCount === 0 for that path); target_file unchanged; state.ladder.auto_completed remains false on disk. Step (a) read-first ordering from contract Behavior section.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A2"
+  },
+  {
+    "id": "T-103",
+    "name": "rung-3 step ordering: snapshot precedes overwrite precedes saveState precedes verifySpot dispatch",
+    "behavior": "Spy on fsPromises.writeFile (records all paths in call order), saveState (records call order index), and the runVerifySpot dispatch (records call order). After a happy-path rung-3 call: snapshot.bak write index < target_file write index < saveState index < runVerifySpot dispatch index. The exact ordering documented in the contract Behavior section (b)→(c)→(d)→(e).",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-104",
+    "name": "rung-1 response: autoVerifyResult is undefined/absent",
+    "behavior": "After a successful rung-1 call, the response object's autoVerifyResult key is undefined OR absent (not set to null with pass:false). autoVerifyResult is rung-3-only per A2.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A2"
+  },
+  {
+    "id": "T-105",
+    "name": "rung-2 response: autoVerifyResult is undefined/absent",
+    "behavior": "After a successful rung-2 call, autoVerifyResult is undefined/absent.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A2"
+  },
+  {
+    "id": "T-106",
+    "name": "registerTools registers no eighth tool (defensive)",
+    "behavior": "Records all registered tool names; asserts the set is exactly {'start','runPreflightProbe','selectPath','setPersonalization','nextSpot','verifySpot','requestHint'} and no extra/spurious registration appears (e.g. accidental 'requestHelp' typo or a duplicate).",
+    "kind": "unit",
+    "target_file": "mcp/server/src/index.ts",
+    "test_file": "tests/requestHint.test.ts",
+    "covers_contract_requirement": "A1"
+  },
+  {
+    "id": "T-107",
+    "name": "full unit + integration suite remains green via pnpm test (smoke)",
+    "behavior": "After cycle-5 implementation, running pnpm test exits 0 with no test files skipped; tsc --noEmit under strict + NodeNext is green. This is a smoke marker; concrete enforcement is the green-phase script's exit code. (A19)",
+    "kind": "integration",
+    "target_file": "mcp/server/src/tools/requestHint.ts",
+    "test_file": "tests/harness.lesson.test.ts",
+    "covers_contract_requirement": "A19"
+  }
+]

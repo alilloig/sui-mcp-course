@@ -1,0 +1,13 @@
+`mcp/server/src/state.ts`
+`mcp/server/src/schemas/state.ts`
+`mcp/server/src/tools/start.ts`
+`mcp/server/src/registry.ts`
+`mcp/server/src/index.ts`
+`scripts/e2e/harness.ts`
+`tests/state.test.ts`
+`tests/start.tool.test.ts`
+`tests/harness.mcp.test.ts`
+`tests/fixtures/state/valid-cursor-p2.json`
+`tests/fixtures/state/corrupt.json`
+`tests/fixtures/state/future-schema.json`
+`mcp/server/package.json`

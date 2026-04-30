@@ -1,0 +1,1224 @@
+[
+  {
+    "cluster_id": "C001",
+    "title": "EACCES read-error path emits archivedTo: '' violating LoadStateResult variant intent",
+    "file": "mcp/server/src/state.ts",
+    "line_ranges": [
+      "36-40",
+      "29-29, 117-117"
+    ],
+    "agreement_count": 2,
+    "reviewers": [
+      1,
+      3
+    ],
+    "max_severity": "high",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "correctness",
+      "error-handling"
+    ],
+    "recommendations": [
+      "Either (a) make archivedTo optional on the corrupt variant and omit it for read-error cases, or (b) introduce a distinct kind: 'read-error' (or the wrapped message variant the contract hints at), and update tools/start.ts to omit the archivedTo field on the warning when no archive was written.",
+      "Read and write the file as a Buffer: `await fsPromises.readFile(statePath)` (no encoding) for the corruption-archive path, and `await fsPromises.writeFile(archivePath, buf)`. Decode to utf8 only for the JSON.parse step, and pass the original Buffer through to archiveCorruptFile. Strengthen T-048 with a non-UTF8 corrupt fixture (e.g. a few 0xFF bytes) to lock in the invariant.",
+      "Either (a) widen LoadStateResult so the corrupt variant has `archivedTo?: string` and only set it when an archive really was written (preferred — keeps the field truthful), or (b) introduce a fourth kind `read-error` distinct from corrupt for unreadable-but-present files. Update tools/start.ts to omit archivedTo from the warning when no archive exists. T-058 only checks the message text, so the bug is invisible to the current test suite."
+    ],
+    "descriptions": [
+      "When readFile rejects with a non-ENOENT errno (EACCES, ENOTDIR, EISDIR, etc.), loadState returns { kind: 'corrupt', archivedTo: '', message: 'Failed to read state file: ...' }. No archive was actually written, but the variant still carries archivedTo as an empty string. Downstream, tools/start.ts unconditionally pushes archivedTo from any corrupt result onto the state-corrupt warning (lines 60-64), so a permission-denied state.json produces a user-facing warning whose archivedTo field is the empty string. Contract A6 says read errors should be 'corrupt with a wrapped read-error message' — the message is correct, but archivedTo: '' is misleading both structurally and to the user.",
+      "loadState reads the canonical state.json with `fsPromises.readFile(statePath, 'utf8')` (string decode), then archiveCorruptFile writes the same string back with `fsPromises.writeFile(archivePath, content, 'utf8')`. Contract A4 promises the archive is byte-for-byte identical to the original. For ASCII / well-formed UTF-8 input this round-trips losslessly, but for arbitrary corrupt bytes — which is exactly the input class A4 covers — Node's utf8 decoder replaces invalid sequences with U+FFFD, breaking byte-for-byte equality. T-048 happens to use only ASCII fixture bytes, so the test passes on a property the implementation does not actually guarantee.",
+      "When fsPromises.readFile throws a non-ENOENT error (EACCES, ENOTDIR, EISDIR, EIO, etc.), loadState returns { kind: 'corrupt', archivedTo: '', message }. The empty-string archivedTo is structurally indistinguishable from a successful archive at the type level (type still requires `archivedTo: string`), and tools/start.ts forwards it verbatim into the surfaced state-corrupt warning at lines 60-64 — so the user receives a warning whose archivedTo field is the empty string, implying an archive exists when none was created. The contract A6 calls this a 'wrapped read-error message' but does not authorize a phantom archive path. Cycle 1's C002/C010 lesson was about distinguishing error codes; this regresses on the new surface by producing a misleading payload for the very codes it is supposed to distinguish."
+    ],
+    "impacts": [
+      "A student hitting an EACCES on state.json will see a warning that claims an archive exists at the empty path. The LoadStateResult type union also conflates 'corrupt-and-archived' with 'read-error' onto the same kind, so callers cannot reliably distinguish them. T-058 does not catch this because it only asserts kind === 'corrupt' and a message regex, never inspects archivedTo.",
+      "If a real student's state.json gets corrupted by a partial flush, log injection, or non-UTF8 binary garbage, the archive will silently lose the original bytes. Recovery / forensics on the archive becomes impossible because the canonical-on-disk bytes and archive bytes will diverge. Low severity in practice (writers in this cycle only emit JSON), but the contract makes a stronger claim than the code delivers.",
+      "Users (and cycle 4's recovery flow) may attempt to read the archive path '' to diagnose the corruption, hitting a confusing ENOENT on the empty-string path. The corrupt branch's guarantee in A4 ('archivedTo is an absolute path that exists on disk') is violated for the EACCES sub-case, breaking the invariant the consolidator can rely on to drive recovery UX."
+    ],
+    "evidence": "return {\n      kind: 'corrupt',\n      archivedTo: '',\n      message: `Failed to read state file: ${e.message ?? String(e)}`,\n    };",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R1-001",
+      "R1-003",
+      "R3-001"
+    ],
+    "resolved": true,
+    "resolution": "Fixed: LoadStateResult corrupt arm widened to optional archivedTo. Read-error branch no longer emits empty-string. T-095 enforces."
+  },
+  {
+    "cluster_id": "C008",
+    "title": "loadState archives JSON-parseable non-objects (e.g. bare 'null', '42', '\"foo\"') as corrupt without distinguishing them",
+    "file": "mcp/server/src/state.ts",
+    "line_ranges": [
+      "47-55",
+      "61-79",
+      "58-69"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      3
+    ],
+    "max_severity": "high",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "error-handling"
+    ],
+    "recommendations": [
+      "Wrap each `await archiveCorruptFile(...)` in try/catch and degrade gracefully — return { kind: 'corrupt', archivedTo: undefined, message: `corrupt; archive failed: ${err.message}` } so the corruption classification still surfaces even when archival fails. Alternatively, hoist a single helper that returns both an archivedTo and an archive-error message. Either way, never let archive I/O failure swallow the primary diagnostic.",
+      "Replace the schema_version gate with `Number.isInteger(parsed.schema_version) && parsed.schema_version >= 1`. Treat non-integer schema_version as corrupt-with-archive (it is malformed input, not a future schema). This also tightens the reasonable-future-schema invariant: only positive integers are valid version identifiers.",
+      "Either (a) deduplicate archives by hash of canonical bytes (skip archiving if the most recent archive's content already matches), or (b) document this as expected behavior and rely on cycle 4's recovery flow to delete the canonical after archiving. Option (a) is more user-friendly. Lower priority than R3-001/R3-002 but worth flagging."
+    ],
+    "descriptions": [
+      "When JSON.parse fails, loadState calls `await archiveCorruptFile(...)` (line 49) before constructing the corrupt result. If the archive write itself fails — disk full (ENOSPC), permissions (EACCES on the directory), or the .sui-deepbook-course/ entry is now a file (ENOTDIR) — archiveCorruptFile rejects, and that rejection propagates unchanged out of loadState. The caller (tools/start.ts) has no try/catch around `await loadState(projectRoot)`, so the entire start tool rejects, the SDK turns the rejection into an MCP tool error, and the user sees a generic transport failure instead of a structured 'state-corrupt' warning. The original corruption fact is lost — the archive failure mode masquerades as an unrelated bug. Same pattern repeats at lines 64 (missing schema_version branch) and 85 (schema validation branch).",
+      "The schema_version gate uses `typeof === 'number'` which accepts NaN, Infinity, -Infinity, and floats (e.g. 1.5). A state.json with `schema_version: NaN` parses successfully, passes the typeof check, then `foundVersion !== STATE_SCHEMA_VERSION` evaluates true (NaN compares unequal to everything), and the schema-mismatch message becomes 'State file has incompatible schema_version NaN. Manual migration required.' — JSON.stringify(NaN) is 'null' so the wire payload would surface a null version while the message text says 'NaN'. Not a crash, but a confusing diagnostic and a silent acceptance of nonsensical input.",
+      "If state.json contains JSON-parseable bytes whose top level is null, a number, a string, or an array, loadState archives the file as corrupt with the message 'missing schema_version'. The contract distinguishes 'JSON-parse failure' (corrupt-with-archive) from 'unknown schema_version' (schema-mismatch, no archive) — but doesn't address the gray case of JSON-parseable non-object. The current implementation lumps all of them under corrupt-with-archive, which is defensible but means a user who saves a literal `null` (e.g. an editor's JSON-format-on-save misfire) gets an unrecoverable archive every load. Each loadState call writes a NEW archive file (line 64 unconditionally calls archiveCorruptFile), since the canonical state.json is preserved per A4. So repeated `loadState` against an unfixed state.json containing `null` produces N archive files for N calls."
+    ],
+    "impacts": [
+      "A second-order failure (disk full / permission flip on the archive directory) erases the primary corruption diagnostic. The student cannot tell whether their state.json is broken or whether the tool itself crashed; recovery flow in cycle 4 cannot key off the missing 'state-corrupt' kind. This is exactly the silent-failure class cycle 1 carry-forward C002/C010 was meant to prevent on the new surface.",
+      "A user-facing warning string with 'NaN' / 'Infinity' / '1.5' values is confusing and leaks the implementer's lax type check. More importantly, the schema-mismatch payload's foundVersion field claims to be a number (per the union `{ kind: 'schema-mismatch'; foundVersion: number; ... }`) but in practice carries a non-finite number — downstream JSON serialization quietly converts it to null, and any cycle-4 logic that compares foundVersion against an integer will silently misbehave.",
+      "A persistent malformed-but-parseable state.json (rare but possible) accrues one archive file per `start` invocation. Disk usage grows linearly with start calls until the user manually rewrites or deletes state.json. No error message tells them to delete the original — only the archive paths are surfaced."
+    ],
+    "evidence": "} catch (_parseErr) {\n    // Not valid JSON — archive and return corrupt\n    const archivedTo = await archiveCorruptFile(stateDir, statePath, raw);",
+    "confidence_spread": [
+      "high",
+      "medium"
+    ],
+    "source_ids": [
+      "R3-002",
+      "R3-005",
+      "R3-007"
+    ],
+    "resolution": "Re-derived to medium per consolidator review.md (C003+C010 merge). Not blocking; cycle-4 watch-point."
+  },
+  {
+    "cluster_id": "C006",
+    "title": "Empty-string archivedTo sentinel breaks the discriminated-union contract",
+    "file": "mcp/server/src/state.ts",
+    "line_ranges": [
+      "30-91",
+      "36-40",
+      "96-119"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      2
+    ],
+    "max_severity": "medium",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "design"
+    ],
+    "recommendations": [
+      "Either widen LoadStateResult with finer kinds ('read-error' | 'corrupt' | 'schema-mismatch' | 'absent') and let start.ts decide how to present them, or add a sub-field `corruptReason: 'read-error' | 'invalid-json' | 'invalid-shape'` to the corrupt arm. Drop the empty-string archivedTo sentinel either way.",
+      "Make archivedTo optional in the corrupt arm (`archivedTo?: string`) OR introduce a separate 'read-error' kind. Drop the `''` sentinel.",
+      "Drop the _statePath parameter. The bytes are already passed in via `content`; the function does not need the path."
+    ],
+    "descriptions": [
+      "loadState collapses four very different failure conditions into the single 'corrupt' kind: (1) non-ENOENT readFile errors (EACCES, ENOTDIR), (2) unparseable JSON, (3) JSON-parseable-but-not-an-object/missing schema_version, and (4) JSON-with-correct-version-but-failed-shape-validation. The contract calls these out as deliberately distinct in spirit ('the contract refuses to conflate them'), and #1 in particular is asymmetric — it returns archivedTo: '' while the other three return a real archive path. A consumer that does `if (result.archivedTo)` can read those four cases as one when each really wants its own kind ('read-error' | 'corrupt-bytes' | 'corrupt-shape' | 'corrupt-schema'). The contract A6 already implicitly demands this distinction (read-error vs ENOENT) and the implementation only honors it via free-text in the message field, which downstream code cannot match on without regex-grepping a human string.",
+      "The LoadStateResult type at lines 17-21 declares the corrupt arm as `{ kind: 'corrupt'; archivedTo: string; message: string }` — implying every corrupt result has a usable archive path. The EACCES/ENOTDIR branch lies to that type by returning `archivedTo: ''`. start.ts then forwards that empty string into the StateWarning as if it were a real path (line 63), which the harness test T-077 happens not to catch because it checks `kind === 'state-corrupt'`. A consumer that opens the archive (cycle 4's recovery flow, or a logging hook) will silently fail. The type either has to admit `archivedTo?: string` (recommended; matches the schema-mismatch arm's shape) or this branch needs its own kind. Either way, an empty string masquerading as an absolute path is the wrong move.",
+      "archiveCorruptFile takes three parameters (stateDir, _statePath, content) but the underscore prefix on _statePath is the standard 'unused parameter' convention. The fact that the function takes a parameter it doesn't use is a smell: either the original design intended to do something with it (e.g. read the bytes from the path rather than receive them already-buffered) and was abandoned, or the parameter is leftover. Either way, callers are passing in a value that is silently discarded. This is the kind of thing reviewers in cycle 1 caught for `RegistryWarning.dir?` (C006)."
+    ],
+    "impacts": [
+      "Cycle 4's recovery flow (and any future telemetry) cannot pattern-match on 'is this a permission problem the user can fix' vs 'are these bytes salvageable' without reaching into the message string. The message-only distinction also drives the awkward `archivedTo: ''` empty-sentinel in the read-error branch — see R2-002.",
+      "Type-level guarantee is false: 'corrupt' results no longer always carry an archive. Future code reading archivedTo as load-bearing will misbehave on the read-error branch.",
+      "Cosmetic, but a future maintainer will have to read the body to discover the parameter is dead. Two callers (lines 49, 64, 85) all pass it; that's three call sites to update if/when the param is dropped."
+    ],
+    "evidence": "return {\n      kind: 'corrupt',\n      archivedTo: '',\n      message: `Failed to read state file: ${e.message ?? String(e)}`,\n    };",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R2-001",
+      "R2-002",
+      "R2-007"
+    ]
+  },
+  {
+    "cluster_id": "C009",
+    "title": "saveState fsync opens a separate read-only fd, not the writeFile fd — durability is not guaranteed",
+    "file": "mcp/server/src/state.ts",
+    "line_ranges": [
+      "131-143",
+      "129-143"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      3
+    ],
+    "max_severity": "medium",
+    "min_severity": "medium",
+    "disputed_severity": false,
+    "categories": [
+      "error-handling"
+    ],
+    "recommendations": [
+      "Use `fsPromises.open(tmpPath, 'w')` to get a FileHandle, call `handle.writeFile(bytes)` then `handle.sync()` then `handle.close()` — single fd, write-flagged, durably synced. Or use the lower-level fs.openSync(tmpPath, 'w'), fs.writeSync, fs.fsyncSync, fs.closeSync sequence. Either approach makes the durability contract real instead of best-effort.",
+      "Wrap the post-writeFile portion of saveState in try/catch; on catch, attempt `fsPromises.unlink(tmpPath).catch(() => {})` before rethrowing. Document the cleanup in a comment so the next reviewer doesn't 'simplify' it away. Add a unit test that asserts `listAllTmpFiles(stateDir).length === 0` after a simulated rename failure."
+    ],
+    "descriptions": [
+      "saveState calls `await fsPromises.writeFile(tmpPath, bytes, 'utf8')` (line 132), which opens, writes, and closes its own fd internally. Then on line 135 the code opens a fresh `fs.openSync(tmpPath, 'r')` (read-only) and runs fsyncSync on that descriptor. POSIX fsync syncs the file data associated with the inode, so on Linux this typically works — but the kernel guarantees fsync flushes data only when invoked on a fd that has write access on certain filesystems (and on Windows / some network filesystems the read-only fsync is a no-op). The contract A7 says 'fsync(fd) (or fs.fsyncSync on the open tmp file)' which the implementer reads as 'any fd referencing the tmp file', but the only durably-guaranteed pattern is to open with write flags, write, fsync, close — using a single descriptor. Tests T-061 only check call ORDER (writeFile→fsync→rename), not that the fsync actually flushed pending dirty pages from writeFile's internal fd.",
+      "saveState writes to `state.tmp-<ts>-<rand>.json` (line 129). If any subsequent step rejects — `openSync` fails (EMFILE/ENFILE), `fsyncSync` throws (EIO), or `fsPromises.rename` rejects (the case T-062/T-063 explicitly simulate) — the tmp file is left on disk and saveState rethrows without cleanup. Each failed save accrues an orphan tmp file under .sui-deepbook-course/, which loadState ignores but which will eventually be visible to the student (and to any directory listing in cycle 4's recovery flow). T-062 explicitly proves the canonical file is intact after rename failure but does not assert the tmp is cleaned up — the test passes today even though the tmp is leaking."
+    ],
+    "impacts": [
+      "On non-Linux filesystems or under rare crash windows, the rename completes before the tmp file's bytes are actually durable. After a power loss the canonical state.json may exist as a zero-length or torn file — the very atomicity the contract sells. The vitest suite cannot detect this; it shows up only in real crash scenarios.",
+      "Repeated save failures (e.g. on a read-only filesystem or under permission flip) silently litter the state directory. A student running the tool in CI with a stale-state pre-step could see dozens of state.tmp-* files, no error path explains them, and the tmp filenames embed wall-clock timestamps + Math.random() so even cleanup-by-pattern is awkward. Borderline silent failure: the operation rejects, but the side effect persists with no signal."
+    ],
+    "evidence": "const tmpPath = path.join(stateDir, `state.tmp-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);\n\n  // Write to tmp file\n  await fsPromises.writeFile(tmpPath, bytes, 'utf8');\n\n  // fsync the tmp file to ensure durability\n  const fd = fs.openSync(tmpPath, 'r');",
+    "confidence_spread": [
+      "medium",
+      "high"
+    ],
+    "source_ids": [
+      "R3-003",
+      "R3-004"
+    ]
+  },
+  {
+    "cluster_id": "C015",
+    "title": "loadState wraps EACCES into corrupt with empty archivedTo — classification leaks no archive but tests-for-archive-existence become false signals",
+    "file": "mcp/server/src/state.ts",
+    "line_ranges": [
+      "27-55",
+      "29",
+      "36-40",
+      "1-145"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      6
+    ],
+    "max_severity": "medium",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "security"
+    ],
+    "recommendations": [
+      "Before readFile, lstat statePath; if the result is a symlink, refuse — return { kind: 'corrupt', archivedTo: '', message: 'state.json is a symlink; refusing to follow' } with NO archive write. Alternatively use fsPromises.open(statePath, fs.constants.O_NOFOLLOW) (POSIX) and treat ELOOP as the symlink-refusal signal. Add a unit test that stages state.json as a symlink to a fixture outside the project root and asserts the archive does NOT contain the symlink target's bytes.",
+      "Cap the read at a sane size (e.g. 1 MiB) — fstat first, refuse with kind: 'corrupt' if size > limit; or use a streaming reader that aborts past the cap. Pair this fix with R6-001 (lstat + size check in the same prelude). Add a unit test: stage a 10 MiB state.json and assert loadState rejects without buffering the whole file.",
+      "Consider a third LoadStateResult kind ('read-error') for non-ENOENT/non-parse errors — distinct from the corruption-with-archive flow. Out of scope for cycle 2's contract A4/A6 minimum, just noting.",
+      "No change."
+    ],
+    "descriptions": [
+      "fsPromises.readFile(statePath, 'utf8') follows symlinks. If <projectRoot>/.sui-deepbook-course/state.json is a symlink to a sensitive file outside the project (e.g. ~/.ssh/id_rsa, /etc/passwd, a sibling user's home), readFile silently reads the target bytes into `raw`. Because the target is not valid JSON (or lacks schema_version), the corruption branch then calls archiveCorruptFile, which writes those exfiltrated bytes byte-for-byte to <projectRoot>/.sui-deepbook-course/state.corrupt-<ts>.json — a path the attacker can subsequently read. The cycle 4 'student decides on resume-from-zero vs abort' rescue path is now an exfiltration primitive.",
+      "fsPromises.readFile(statePath, 'utf8') has no maxBytes cap. If state.json is multi-GB, a sparse file, or (combined with R6-001) a symlink to /dev/zero, the read buffers the entire content into memory before JSON.parse runs. Cycle 1 logged this as C007 against `path.json` and `settings.json` under a trusted-developer threat model and deferred it; cycle 2 widens the surface to `state.json`, which is now genuinely state-mutated by the running tool (not just inert config) and will be student-modified between runs.",
+      "Non-ENOENT readFile errors (EACCES, ENOTDIR, EMFILE, EISDIR) all return { kind: 'corrupt', archivedTo: '', message: ... }. The empty archivedTo field is structurally indistinguishable from a real corruption result — downstream code (start.ts:60-65) pushes archivedTo: '' onto the warning, so a state-corrupt warning is surfaced to the user with an empty archive path. From a security standpoint the OS-level message is bubbled through `e.message ?? String(e)`, which on Node fs errors includes the absolute file path — this is fine in the local-tool model but worth noting for any future remote MCP transport where the path is sensitive. Not exploitable; logged as info because the contract A6 lesson did call out distinguishing ENOENT from other errors and the implementation does (corrupt vs absent), but the corrupt classification's archivedTo='' is a cross-cutting design wart that a reviewer in a different lane will flag better.",
+      "Grepped state.ts, schemas/state.ts, tools/start.ts, index.ts, and scripts/e2e/harness.ts for `kind\\s*:\\s*['\"]shell['\"]` and `01-orderbook-viewer` literals. Zero matches in either set. Cycle 1's A14 (shell-action) and A10 (slug-agnostic engine) invariants are preserved as A16/A17 on the new surface. T-092 and T-093 will catch regressions; this finding is just the positive verification."
+    ],
+    "impacts": [
+      "Local privilege/info-disclosure: an attacker who can pre-stage a symlink at .sui-deepbook-course/state.json (shared dev box, recycled project dir, course-shipped scaffold, or a malicious `git pull`) coerces the MCP server (running with the user's privileges) into copying arbitrary readable files into a project-local archive the attacker can exfil. The warning's `archivedTo` field even tells the attacker the exact path. Threat-model caveat: cycle 1's trusted-developer assumption (C007) limits the blast radius today, but A4 explicitly archives bytes verbatim — the property is load-bearing for the corruption rescue contract, so the symlink-follow has to be addressed deliberately, not papered over.",
+      "Local DoS: a corrupt state.json large enough to OOM the MCP server process kills the IDE-attached tool surface and may take the parent IDE process down with it. Recovery requires manually deleting state.json. Same threat model as C007 (trusted developer), but now on a surface the contract explicitly allows to be malformed (corrupt classification is a documented kind).",
+      "User-facing: a state-corrupt warning with archivedTo='' tells the student 'archived to ' (literal empty string in stateResult.message also includes the archive path interpolated, so this branch DOES NOT format that — message reads 'Failed to read state file: ...'). The warning kind doesn't match the real failure (permission denied is not corruption). No security impact today.",
+      "None — positive verification."
+    ],
+    "evidence": "return {\n      kind: 'corrupt',\n      archivedTo: '',\n      message: `Failed to read state file: ${e.message ?? String(e)}`,\n    };",
+    "confidence_spread": [
+      "high",
+      "medium",
+      "low"
+    ],
+    "source_ids": [
+      "R6-001",
+      "R6-002",
+      "R6-005",
+      "R6-007"
+    ],
+    "resolved": true,
+    "resolution": "Co-resolved with C001 — same archivedTo empty-string surface."
+  },
+  {
+    "cluster_id": "C004",
+    "title": "archiveCounter is module-level mutable state — fragile across test isolation and long-running processes",
+    "file": "mcp/server/src/state.ts",
+    "line_ranges": [
+      "14-15, 112-113",
+      "14-15",
+      "14-15, 111-115"
+    ],
+    "agreement_count": 3,
+    "reviewers": [
+      1,
+      2,
+      3
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "correctness",
+      "design",
+      "error-handling"
+    ],
+    "recommendations": [
+      "Switch to a high-resolution timestamp (process.hrtime.bigint() suffix) or a crypto-random suffix to remove the global-counter dependency, OR scope the counter inside archiveCorruptFile via a closure / WeakMap-by-stateDir. Either approach removes the module-level mutable.",
+      "Replace `archiveCounter` with `crypto.randomBytes(3).toString('hex')` or `process.hrtime.bigint()` for collision avoidance — both are stateless and don't carry cross-call coupling.",
+      "Either include a process-startup random suffix in the counter seed (`let archiveCounter = Math.floor(Math.random() * 1000);`), or append `process.pid` to the archive filename, or use crypto.randomUUID() in the archive name suffix. Any of these eliminates the cross-restart collision class."
+    ],
+    "descriptions": [
+      "The `archiveCounter` variable lives at module top-level and increments forever for the lifetime of the Node process. T-050's distinct-paths-in-same-second test passes because the counter advances even when timestamps collide. However: (a) the counter is not reset between test files, so cross-file ordering can affect archive filenames in ways tests don't currently observe; (b) in a long-running MCP server the counter grows monotonically and ends up baked into archive paths as e.g. `state.corrupt-...-194732.json` — harmless but ugly; (c) two distinct project roots in the same process share the same counter, which is fine for uniqueness but couples them implicitly.",
+      "`let archiveCounter = 0;` is module-scoped and monotonically increases across every loadState call in the process lifetime. This works for the contract's same-millisecond-collision requirement, but it introduces hidden state that survives across distinct project roots and across distinct test cases. It also means archive filenames in a long-running process slowly drift away from a clean ISO timestamp ('state.corrupt-2026-04-28T12-00-00.000Z-47.json'). For a CLI tool that runs once per invocation, this is fine; for the in-process harness that boots a server and shuts it down per test, the counter becomes a leaky abstraction (test A's last archive number influences test B's archive number). Not load-bearing today, but the counter wants to be either (a) per-server-instance (move into the closure of a constructed StateAdapter) or (b) replaced with crypto.randomBytes(2).toString('hex') for the suffix.",
+      "The monotonic archive counter resides in module scope (`let archiveCounter = 0;`). It increments only within a single process lifetime. If the host process restarts (e.g. the MCP server is bounced between two student runs in the same wall-clock millisecond) and a second corruption occurs at the exact same Date.now() millisecond, the counter resets to 1 — the same suffix the previous process had after its first corruption. The archive filename is then identical, and `fsPromises.writeFile(archivePath, content)` clobbers the previous archive byte-for-byte. T-050 only proves uniqueness within a single process, not across restarts."
+    ],
+    "impacts": [
+      "Mostly cosmetic. The functional uniqueness guarantee A4 demands is met. Risk is that future tests that import state.ts and reset module state (e.g. via vi.resetModules) will see a reset counter and could collide if they also pin the timestamp.",
+      "Tests are technically order-dependent: T-050's archives have suffix `-1` and `-2` on a clean run but `-47` and `-48` if other tests have run first. None of the assertions match against the counter value, but a future test that does (e.g. asserting suffix `-1` for the first corruption) will silently pass-or-fail based on test order.",
+      "Extremely low-probability collision (requires two distinct corruptions within the same wall-clock ms across a restart), but the failure mode is silent data loss of the earlier archive. The contract's two-distinct-archive promise is technically a single-process invariant, so this is a doc-vs-code gap, not a contract violation. Flagging because the consolidator may want to widen the test or note the limitation."
+    ],
+    "evidence": "// Monotonic counter to ensure uniqueness within the same millisecond\nlet archiveCounter = 0;",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R1-006",
+      "R2-008",
+      "R3-006"
+    ]
+  },
+  {
+    "cluster_id": "C002",
+    "title": "saveState fsyncs an O_RDONLY fd — durability of tmp file is platform-dependent",
+    "file": "mcp/server/src/state.ts",
+    "line_ranges": [
+      "134-140"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      1
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "correctness"
+    ],
+    "recommendations": [
+      "Acquire the fd by writing through it directly (fs.openSync(tmpPath, 'w'), fs.writeSync(fd, bytes), fs.fsyncSync(fd), fs.closeSync(fd)), or use fsPromises.open(tmpPath, 'r+') to obtain a fd whose fsync semantics are unambiguous. Add an explicit unit test that asserts the open mode used for the fsynced fd has write capability."
+    ],
+    "descriptions": [
+      "saveState opens the tmp file with the read-only flag ('r') and then calls fs.fsyncSync(fd). The contract A7 promises a 'write-tmp-then-fsync-then-rename' sequence with the fsync flushing the tmp file's bytes to durable storage. On Linux fsync of an O_RDONLY fd is permitted and typically does flush the inode, but the conventional/portable approach is to fsync the same fd (or a write-capable fd) used to perform the write — fsync semantics on a read-only descriptor are implementation-defined across platforms. T-061 only asserts the order of writeFile/fsync/rename calls, not that fsync was called on a write-capable descriptor, so this slips past green."
+    ],
+    "impacts": [
+      "On a platform whose fsync(O_RDONLY) is a no-op, a process killed between writeFile and rename could leave the tmp bytes in the page cache, defeating the durability guarantee A7 documents. Low severity because the rename-only-mutates-canonical invariant still holds (the canonical state.json is never partially written), but the durability claim in A7 is weakened."
+    ],
+    "evidence": "const fd = fs.openSync(tmpPath, 'r');\n  try {\n    fs.fsyncSync(fd);\n  } finally {\n    fs.closeSync(fd);\n  }",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R1-002"
+    ]
+  },
+  {
+    "cluster_id": "C003",
+    "title": "Schema validation failure on schema_version-1 file is archived, not surfaced as schema-mismatch",
+    "file": "mcp/server/src/state.ts",
+    "line_ranges": [
+      "58-70",
+      "82-91"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      1
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "correctness"
+    ],
+    "recommendations": [
+      "Treat 'JSON-valid object missing schema_version' as schema-mismatch with foundVersion: null (or 0), no archive. Or, alternatively, require state files to have a schema_version and document it explicitly; either way, do not silently archive. Add a unit test for the missing-schema_version case.",
+      "Decide whether shape-invalid-but-parseable counts as corrupt (current behavior) or warrants a third classification kind (e.g. 'invalid-shape') with no archive. If keeping current behavior, add a unit test asserting the archive-on-shape-invalid path so the choice is locked. If splitting, mirror A5's no-archive rule."
+    ],
+    "descriptions": [
+      "If state.json parses to a JSON object that lacks a numeric `schema_version` field (e.g. an empty object {}, or a dump from an older pre-1.0 schema that used a string version), loadState archives the bytes and returns kind: 'corrupt'. Contract A4 reserves 'corrupt' for JSON-parse failure; A5 reserves 'schema-mismatch' (no archive) for parseable-but-unknown-version. A parseable-but-no-version-at-all file is in neither bucket, and the implementer's choice was to lump it with 'corrupt' (write an archive). That collapses the load-bearing 'do not conflate' promise the cycle's intro paragraph emphasizes.",
+      "When parsed.schema_version === STATE_SCHEMA_VERSION but validateState rejects the structure (e.g. selected_path missing, history not an array), loadState archives the file and classifies as 'corrupt' with a message embedding the validator error. The contract A5 distinguishes corruption (parse failure) from schema-mismatch (parseable-but-version-unknown); a third class — parseable-and-version-known-but-shape-invalid — is left implicit. Treating it as corrupt-with-archive means a student whose state file is structurally wrong (e.g., truncated by a tool that wrote only some fields) gets the same archive-rescue treatment as raw garbage, but the schema_version=1 version is also valid, so on subsequent starts the canonical file is still there and gets archived again on every run."
+    ],
+    "impacts": [
+      "A student who hand-edits state.json and forgets the schema_version key gets their file archived (and then on next start, the canonical is still there, classified corrupt again, producing a second archive). Each start invocation creates a new archive until the student re-adds schema_version. This is the same accidental archive-spam pattern A5 was written to prevent. Low severity because the path is unusual, but the contract's spirit is violated.",
+      "Repeated archive creation on a file that is parseable JSON but shape-invalid. Same archive-spam pattern as R1-004, just one branch deeper. Tests don't cover this case directly (T-067-T-074 test validateState in isolation; T-048 tests JSON.parse failure). Low severity because in normal operation only saveState writes state.json and saveState always writes a validateable shape."
+    ],
+    "evidence": "if (\n    typeof parsed !== 'object' ||\n    parsed === null ||\n    typeof (parsed as Record<string, unknown>)['schema_version'] !== 'number'\n  ) {\n    // Can't determine schema_version — archive as corrupt\n    const archivedTo = await archiveCorruptFile(stateDir, statePath, raw);",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R1-004",
+      "R1-005"
+    ]
+  },
+  {
+    "cluster_id": "C007",
+    "title": "saveState mixes async fsPromises with sync openSync/fsyncSync/closeSync inside an async function",
+    "file": "mcp/server/src/state.ts",
+    "line_ranges": [
+      "121-144"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      2
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "design"
+    ],
+    "recommendations": [
+      "Replace the openSync/fsyncSync/closeSync block with `const fh = await fsPromises.open(tmpPath, 'r'); try { await fh.sync(); } finally { await fh.close(); }`."
+    ],
+    "descriptions": [
+      "saveState is `async`, awaits fsPromises.writeFile, then drops to synchronous fs.openSync / fs.fsyncSync / fs.closeSync to fsync the tmp file, then awaits fsPromises.rename. The contract calls for 'write-tmp-then-fsync-then-rename' atomicity, which the implementation satisfies — but mixing the async and sync APIs is a design smell: a slow fsync (the whole point of fsync) blocks the event loop, defeating the reason saveState is async in the first place. The Node guidance for this pattern is to use `fsPromises.open()` returning a FileHandle, then `await fileHandle.sync()` and `await fileHandle.close()`. That keeps the function uniformly async and avoids holding the event loop during the durability barrier."
+    ],
+    "impacts": [
+      "On a real filesystem with a slow fsync (network mounts, encrypted drives), saveState blocks the entire MCP server's event loop for the duration of the fsync. In cycle 4, when this runs from inside an MCP tool handler, that means no other tool can be answered concurrently. The contract's intent ('async I/O surface') is preserved at the type level but defeated at the runtime level."
+    ],
+    "evidence": "  // fsync the tmp file to ensure durability\n  const fd = fs.openSync(tmpPath, 'r');\n  try {\n    fs.fsyncSync(fd);\n  } finally {\n    fs.closeSync(fd);\n  }",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R2-009"
+    ]
+  },
+  {
+    "cluster_id": "C010",
+    "title": "validateState failure after schema_version match archives state but contract didn't authorize it",
+    "file": "mcp/server/src/state.ts",
+    "line_ranges": [
+      "82-91"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      3
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "error-handling"
+    ],
+    "recommendations": [
+      "Treat validateState failure as a third classification 'state-shape-invalid' with no archive (mirrors schema-mismatch's no-archive policy), or bump schema_version on every shape change so this code path is unreachable. Document the choice in a comment near line 85."
+    ],
+    "descriptions": [
+      "When a state.json has the correct schema_version (1) but fails the shape validator (e.g. missing selected_path), loadState archives it as corrupt at line 85. Contract A4 ties the archive behavior to JSON-parse failure; A5 ties no-archive behavior to schema_version mismatch. The case 'JSON-parseable, version-matched, but shape-invalid' is contractually undefined — the implementer chose corrupt-with-archive, which is reasonable, but it means a future schema-1.x patch that adds a required field will retroactively classify all old state.json files as corrupt and archive them. This couples schema evolution to disk side-effects in a way the contract did not require."
+    ],
+    "impacts": [
+      "Forward-compatibility risk: any future tightening of the State shape (e.g. requiring a new ladder rung field) will, on rollout, cause every existing state.json to be archived and the canonical preserved-but-rejected. Users will see 'corrupt' warnings for files that are not corrupt — they're just from an older minor version. The contract's separation of corruption from migration intentionally avoids this conflation; the implementation reintroduces it for the validateState path."
+    ],
+    "evidence": "// Validate shape\n  const validation = validateState(parsed);\n  if (!validation.ok) {\n    const archivedTo = await archiveCorruptFile(stateDir, statePath, raw);\n    return {\n      kind: 'corrupt',\n      archivedTo,",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R3-008"
+    ]
+  },
+  {
+    "cluster_id": "C011",
+    "title": "Unused parameter `_statePath` on archiveCorruptFile",
+    "file": "mcp/server/src/state.ts",
+    "line_ranges": [
+      "106-109",
+      "96-100"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      4
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "simplicity"
+    ],
+    "recommendations": [
+      "Delete the second .replace(/\\\\./g, '.') call. The .replace(/:/g, '-') alone is sufficient to make the ISO-8601 string filesystem-safe.",
+      "Drop the _statePath parameter from archiveCorruptFile and update the three call sites in loadState. The function is logically (stateDir, content) → archivePath."
+    ],
+    "descriptions": [
+      "The timestamp builder chains two .replace() calls; the second one replaces '.' with '.' — a pure no-op that does nothing to the string. Looks like a leftover from a different filesystem-safety scheme that never landed.",
+      "archiveCorruptFile takes (stateDir, _statePath, content) but never reads _statePath. The underscore prefix flags 'intentionally unused', but the parameter itself is also unused at every call site's contract — every caller passes statePath only because the signature demands it."
+    ],
+    "impacts": [
+      "Reader of the code has to pause and check whether the dot-to-dot rewrite has a special meaning (e.g. regex escaping nuance). It does not. Pure noise on the hot path of the corruption branch.",
+      "Three call sites pass an argument that the function ignores. Future readers may assume the function must inspect or mutate the canonical statePath (it does not, by design — that is a load-bearing property per A4). Removing the parameter makes the 'archive does not touch canonical' invariant visible at the type level."
+    ],
+    "evidence": "async function archiveCorruptFile(\n  stateDir: string,\n  _statePath: string,\n  content: string,\n): Promise<string> {",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R4-001",
+      "R4-002"
+    ]
+  },
+  {
+    "cluster_id": "C012",
+    "title": "Belt-and-suspenders uniqueness in saveState tmp filename",
+    "file": "mcp/server/src/state.ts",
+    "line_ranges": [
+      "129-129"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      4
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "simplicity"
+    ],
+    "recommendations": [
+      "Pick one. `state.tmp-${Math.random().toString(36).slice(2)}.json` is the simplest sufficient form. Keep Date.now() only if you want the tmp file to be human-sortable for debugging."
+    ],
+    "descriptions": [
+      "The tmp file path combines Date.now() AND Math.random().toString(36).slice(2) for uniqueness. Either alone is sufficient for the contract's same-process uniqueness requirement (saveState is sequential per-project; even concurrent saves on the same project root almost never share a millisecond, and Math.random gives ~52 bits of entropy on its own)."
+    ],
+    "impacts": [
+      "Minor code noise — two uniqueness sources where one would do. Not a bug, but a reader has to mentally justify why both are needed and conclude 'they aren't'."
+    ],
+    "evidence": "const tmpPath = path.join(stateDir, `state.tmp-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R4-004"
+    ]
+  },
+  {
+    "cluster_id": "C013",
+    "title": "Module-global archiveCounter is heavier than the test requirement needs",
+    "file": "mcp/server/src/state.ts",
+    "line_ranges": [
+      "14-15, 112-113"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      4
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "simplicity"
+    ],
+    "recommendations": [
+      "Either drop the counter entirely and rely on the millisecond timestamp (the test passes empirically because the two reads aren't synchronous within a ms), or replace with `process.hrtime.bigint()` appended to the suffix — same uniqueness guarantee without module-level mutation."
+    ],
+    "descriptions": [
+      "A module-level mutable counter (`let archiveCounter = 0`) is incremented on every corruption to disambiguate same-millisecond archives. The ISO-8601 timestamp already includes milliseconds, and T-050's two corruptions are separated by a full archive write + JS event loop turn — empirically they almost always land on different milliseconds. The counter is belt-and-suspenders against a near-impossible collision, at the cost of a module-scope side-effect channel that resets only on process restart."
+    ],
+    "impacts": [
+      "Adds a hidden piece of mutable state to a file otherwise written as pure functions over (projectRoot, fs). Counter monotonically grows for the life of the process; long-running servers see archive names like `state.corrupt-...-12345.json` after enough corruptions, which leaks process lifetime info into filenames."
+    ],
+    "evidence": "// Monotonic counter to ensure uniqueness within the same millisecond\nlet archiveCounter = 0;",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R4-005"
+    ]
+  },
+  {
+    "cluster_id": "C014",
+    "title": "loadState's archive call site duplicates the same five lines three times",
+    "file": "mcp/server/src/state.ts",
+    "line_ranges": [
+      "47-91"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      4
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "simplicity"
+    ],
+    "recommendations": [
+      "Extract a small helper: `async function classifyCorrupt(stateDir, raw, reason): Promise<LoadStateResult>` that does the archive and returns the corrupt envelope. The three branches collapse to one-liners passing the reason fragment."
+    ],
+    "descriptions": [
+      "Three branches in loadState build the same shape: call archiveCorruptFile, return { kind: 'corrupt', archivedTo, message: `... archived original to ${archivedTo}.` }. The only thing that differs between them is the reason fragment ('invalid JSON' vs 'missing schema_version' vs 'schema validation failed: ...')."
+    ],
+    "impacts": [
+      "Three near-identical 5-line blocks. A future reviewer adding a fourth corruption trigger (say, schema_version is negative) will copy-paste a fourth one. Cycle 4 is likely to add at least one more validator (ladder rung shape, cursor existence inside ladder)."
+    ],
+    "evidence": "const archivedTo = await archiveCorruptFile(stateDir, statePath, raw);\n    return {\n      kind: 'corrupt',\n      archivedTo,\n      message: `State file was corrupt (invalid JSON); archived original to ${archivedTo}.`,\n    };",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R4-009"
+    ]
+  },
+  {
+    "cluster_id": "C016",
+    "title": "saveState writes via predictable tmp path with non-O_EXCL writeFile — symlink-clobber race",
+    "file": "mcp/server/src/state.ts",
+    "line_ranges": [
+      "129-143",
+      "112-118"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      6
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "security"
+    ],
+    "recommendations": [
+      "Use fsPromises.writeFile(tmpPath, bytes, { flag: 'wx', mode: 0o600 }) — wx fails if the path exists (including a symlink). Same with the corrupt-archive write at line 117. Add a test: pre-create a symlink at the predictable tmp path and assert saveState rejects rather than following the symlink.",
+      "Apply the same { flag: 'wx', mode: 0o600 } fix to the writeFile call inside archiveCorruptFile. If wx fails, increment the counter and retry once, then surface a structured error rather than overwriting."
+    ],
+    "descriptions": [
+      "saveState constructs tmpPath as `state.tmp-${Date.now()}-${Math.random()...}` and calls fsPromises.writeFile(tmpPath, ...) without the wx (O_CREAT|O_EXCL) flag. If an attacker pre-creates a symlink at that exact tmpPath pointing somewhere writable by the MCP user (e.g. ~/.config/something), writeFile follows the symlink and clobbers the target. Math.random + Date.now is predictable enough on a shared machine to make this race plausible — the suffix entropy is ~52 bits but the attacker can mass-stage symlinks for many timestamp values. The subsequent rename(tmpPath, statePath) compounds: if tmpPath was a symlink, rename moves the symlink (not the target) into place, leaving state.json as a dangling symlink.",
+      "Parallel of R6-003 on the corruption-archive write. archivePath is `state.corrupt-${ts}-${counter}.json` — the timestamp portion is fully predictable (clock-derived) and the counter starts at 0 process-globally, so an attacker who knows the MCP server is about to start can pre-stage symlinks at predictable archive paths. fsPromises.writeFile without wx will follow them. T-050's same-second-distinct-paths invariant is preserved by the counter, but the counter being process-global (not per-project) means two project roots share the same counter sequence, slightly worsening predictability."
+    ],
+    "impacts": [
+      "Local: arbitrary file overwrite under the MCP user's privileges. Same shared-machine / recycled-dir threat model as R6-001. Not exploitable in the cycle 1 trusted-developer model, but worth fixing while the saveState surface is small.",
+      "Local arbitrary-file overwrite via symlink, gated on the attacker controlling .sui-deepbook-course/. Combined with R6-001, an attacker who can stage state.json as a symlink can ALSO stage the eventual archive path as a symlink, redirecting the exfiltrated bytes to a destination they choose (e.g. /tmp/loot). Threat surface is the same trusted-developer assumption."
+    ],
+    "evidence": "const tmpPath = path.join(stateDir, `state.tmp-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);\n  await fsPromises.writeFile(tmpPath, bytes, 'utf8');",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R6-003",
+      "R6-004"
+    ]
+  },
+  {
+    "cluster_id": "C017",
+    "title": "registry.ts RegistryWarning.kind is still a loose `string`, defeating the discriminated-union benefit when state warnings join the array",
+    "file": "mcp/server/src/registry.ts",
+    "line_ranges": [
+      "14-19"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      2
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "design"
+    ],
+    "recommendations": [
+      "Define a single `EngineWarning` discriminated union in a shared place (e.g. `mcp/server/src/warnings.ts`) keyed by literal `kind` values. Each kind gets its own narrow shape. registry.ts and state.ts both produce members of the union; tools/start.ts consumes the union without a structural sum."
+    ],
+    "descriptions": [
+      "Cycle 1's review (C003) flagged `RegistryWarning.kind: string` as a missed discriminated-union opportunity. Cycle 2 doubled down by introducing a *second* warning shape (StateWarning) at tools/start.ts:8-13 and joining them into a single `(RegistryWarning | StateWarning)[]` array. RegistryWarning's kind being `string` means the union effectively degrades to 'any string' — a consumer cannot exhaustively switch on warning kinds, and a typo in 'state-corrupt' anywhere in the codebase will not be caught by the compiler. The union also shows a parallel-shape problem: RegistryWarning has optional `path?` and `dir?`, StateWarning has optional `archivedTo?` and `foundVersion?`, and they both have `{ kind, message }`. They want to be unified."
+    ],
+    "impacts": [
+      "Two concerns: (a) the cycle 1 carry-forward (C003) didn't get addressed even though cycle 2 was a natural moment to fix it — the union literally needed to widen — and (b) the new StateWarning is shaped just like RegistryWarning with different optional fields. Long-term this is going to fork into N parallel warning interfaces (cycle 3 will add a preflight warning shape)."
+    ],
+    "evidence": "export interface RegistryWarning {\n  kind: string;",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R2-003"
+    ]
+  },
+  {
+    "cluster_id": "C018",
+    "title": "StateWarning lives in tools/start.ts but is a domain shape, not a tool concern",
+    "file": "mcp/server/src/tools/start.ts",
+    "line_ranges": [
+      "8-13"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      2
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "design"
+    ],
+    "recommendations": [
+      "Move StateWarning into a sibling of state.ts (e.g. mcp/server/src/state.ts itself, or a new mcp/server/src/warnings.ts as part of R2-003). The tool then imports it like any other domain type."
+    ],
+    "descriptions": [
+      "The contract declares state.ts as 'pure I/O + classification', and yet the response-shape interface that maps loadState's outcomes onto the wire — StateWarning — lives in tools/start.ts. This is exactly the boundary the contract said state.ts 'does not know about' (line 11 of contract.md). That cleanly separates the producer side (state.ts emits LoadStateResult) but lands the consumer-facing warning shape inside the tool handler that happens to surface it first. Cycle 4 will add at least three more callers of saveState (selectPath/setPersonalization/nextSpot) and possibly more emitters. If any of *them* surface state warnings, they'll either re-import StateWarning from tools/start.ts (creating a backwards dependency from one tool into another) or duplicate the shape."
+    ],
+    "impacts": [
+      "A future tool that wants to surface state-corrupt or state-schema-mismatch (e.g. cycle 4's selectPath after a corruption-during-save) has to reach into another tool's file to grab the type. Tool files should be terminal consumers of types, not producers."
+    ],
+    "evidence": "export interface StateWarning {\n  kind: 'state-corrupt' | 'state-schema-mismatch';",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R2-004"
+    ]
+  },
+  {
+    "cluster_id": "C019",
+    "title": "Warnings array constructed twice in runStart",
+    "file": "mcp/server/src/tools/start.ts",
+    "line_ranges": [
+      "29-45"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      4
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "simplicity"
+    ],
+    "recommendations": [
+      "Build `warnings` once at the top from `[...registry.warnings]`, push the styleResult warning if present, then early-return on !styleResult.ok carrying that array. The state-switch then pushes onto the same array. Removes one local declaration and one .unshift call."
+    ],
+    "descriptions": [
+      "Both branches of the outputStyleOk gate build their own `warnings` local from `[...registry.warnings]`. The early-return path also conditionally unshifts the styleResult warning. The post-gate path builds a fresh copy and pushes state warnings. Two near-identical constructions of the same array; the only divergence is which side gets the styleResult warning unshifted."
+    ],
+    "impacts": [
+      "Minor duplication. A future maintainer adding (say) a third warning source will have to remember to update both branches. Not a bug; a refactor opportunity."
+    ],
+    "evidence": "if (!styleResult.ok) {\n    const warnings: (RegistryWarning | StateWarning)[] = [...registry.warnings];\n    if (styleResult.warning) {\n      warnings.unshift(styleResult.warning);\n    }",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R4-007"
+    ]
+  },
+  {
+    "cluster_id": "C021",
+    "title": "index.ts mixes library exports, tool registration, and bin entrypoint behind a process.argv guard",
+    "file": "mcp/server/src/index.ts",
+    "line_ranges": [
+      "1-48",
+      "8-12"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      2
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "design"
+    ],
+    "recommendations": [
+      "Extract the bin into `mcp/server/src/bin.ts` (or `cli.ts`); keep `index.ts` as the export surface only. Update `package.json#bin` and the `start`/`dev` scripts. The harness keeps importing from `index.ts` unchanged.",
+      "Add `@modelcontextprotocol/sdk` to the workspace root's devDependencies (or the tests workspace) and have the harness import McpServer/Client/InMemoryTransport directly from the SDK. Keep `index.ts` exporting only `registerTools` and any genuinely public engine types."
+    ],
+    "descriptions": [
+      "index.ts carries three concerns: (a) re-exporting SDK seams (McpServer, Client, InMemoryTransport) so the test harness has a single import path; (b) the registerTools(server) factory; (c) the stdio bin entrypoint guarded by a `process.argv[1] === fileURLToPath(import.meta.url)` check. The third is the leaky bit. The standard ESM way to split bin from library is to put the bin in its own file (`src/bin.ts`) listed under `package.json#bin`, and keep `index.ts` purely as the library surface. The argv-guard pattern works but it is fragile (symlinks, `node --import` loaders, and process managers can all break the equality check) and it forces every importer of the library — including the test harness — to load and parse 30+ extra lines of stdio bootstrap they will never use.",
+      "Lines 10-12 re-export McpServer, Client, and InMemoryTransport from the index module so the harness can resolve them through one import. The comment is honest about why — 'so the in-process harness can resolve all classes from a single import without needing @modelcontextprotocol/sdk installed at the workspace root.' That solves the workspace-vs-harness boundary problem (cycle 1 C018 carry-forward), but it does it by widening the *library's* public surface to include test infrastructure. McpServer is a server-side seam; Client and InMemoryTransport are *client-side* and only meaningful for in-process testing. A library user who imports `@sui-deepbook-course/mcp-server` and sees `Client` exported will reasonably wonder why the server package re-exports a client. The cleaner answer is to add `@modelcontextprotocol/sdk` to the test root's dependencies (workspace root or a `tests/package.json`) so the harness imports directly from the SDK. That keeps the library boundary narrow."
+    ],
+    "impacts": [
+      "Two failure modes. First, anyone consuming `index.ts` as a library (the harness already does, and cycle-4+ TS dApp will probably do) loads the SDK's stdio-transport module unnecessarily — small bundle hit. Second, if a future runner invokes `node --loader tsx src/index.ts` or similar, argv[1] may not equal the resolved file URL and the bin will silently never start. The argv guard also resists static analysis: tools that look at top-level effects don't see the conditional spawn.",
+      "Cycle 4+ when this package is consumed externally, the apparent API surface includes Client + InMemoryTransport, which are not part of what `registerTools` does. Renaming or upgrading the SDK becomes a breaking change to consumers who never asked for those re-exports. Cosmetic but will accumulate."
+    ],
+    "evidence": "// Only start the stdio transport when this file is executed directly as a script.\nconst _currentFile = fileURLToPath(import.meta.url);\nif (process.argv[1] === _currentFile) {",
+    "confidence_spread": [
+      "high",
+      "medium"
+    ],
+    "source_ids": [
+      "R2-005",
+      "R2-006"
+    ]
+  },
+  {
+    "cluster_id": "C023",
+    "title": "schemas/state.ts validator returns the original input, not a normalized copy — Personalization and HistoryEntry shapes are unchecked",
+    "file": "mcp/server/src/schemas/state.ts",
+    "line_ranges": [
+      "84-97"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      2
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "design"
+    ],
+    "recommendations": [
+      "Either (a) tighten validateState to check `obj.personalization.poll_interval_ms` is a number, `obj.history[i].ts/event` are strings (matches path.ts depth); or (b) explicitly document the shallow-only contract and stop typing the result as Personalization/HistoryEntry — return them as `Record<string, unknown>` and `unknown[]` until cycle 4 deepens the check."
+    ],
+    "descriptions": [
+      "validateState confirms that `personalization` is an object and `history` is an array, then casts: `personalization: obj['personalization'] as Personalization` and `history: obj['history'] as HistoryEntry[]`. The cast is a lie — the validator never inspects the inner shape (e.g. that history elements have `ts: string` and `event: string`, or that personalization has `poll_interval_ms: number`). A consumer reading `state.history[0].ts` will get whatever was on disk, which the type system claims is a string. This deliberately-shallow check is consistent with the contract ('cycle 2 only enforces top-level shape and schema_version'), but it's worth flagging that the cast asserts more than the runtime checks. The path.ts validator at lines 41-48 went one level deeper for personalization_options; the state validator wants the same level of rigor for personalization and history. The shape mirrors path.ts/phases.ts only structurally; the depth-of-validation idiom is not preserved."
+    ],
+    "impacts": [
+      "If on-disk state.json has `personalization: { poll_interval_ms: 'three thousand' }`, validateState returns ok:true and the consumer crashes when it does arithmetic on the string. The corruption was real but classified as ok. Cycle 4's selectPath/nextSpot will be the first to dereference these inner fields."
+    ],
+    "evidence": "      personalization: obj['personalization'] as Personalization,\n      cursor: {\n        phase_id: cursor['phase_id'] as string,\n        spot_id: cursor['spot_id'] as string,\n      },\n      ladder: obj['ladder'] as Record<string, LadderRung>,\n      history: obj['history'] as HistoryEntry[],",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R2-010"
+    ]
+  },
+  {
+    "cluster_id": "C024",
+    "title": "validateState rebuilds the input object field-by-field instead of returning the validated reference",
+    "file": "mcp/server/src/schemas/state.ts",
+    "line_ranges": [
+      "35-98",
+      "84-97"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      4
+    ],
+    "max_severity": "low",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "simplicity"
+    ],
+    "recommendations": [
+      "Not for this cycle — consistency with the existing schemas/ pattern is the higher value today. Flag for cycle 4 when State validation gets stricter: at that point convert all three schemas/*.ts files to zod in one pass.",
+      "Pick a policy and apply it consistently. Either (a) cast the validated input wholesale: `return { ok: true, value: obj as unknown as State }`, or (b) document and enforce the strip-extras policy in tests and apply it uniformly to every nested object. Option (a) is the simpler choice and matches how schemas/path.ts handles it."
+    ],
+    "descriptions": [
+      "validateState is ~64 lines of hand-rolled type-narrowing checks returning {ok, value|error}. zod is already a runtime dependency (used in mcp/server/src/index.ts for tool input schema). A z.object({...}) declaration plus a thin .safeParse wrapper would cover every assertion the tests check (T-067..T-074) in roughly a third of the lines, with better error messages for free.",
+      "On the success path, validateState constructs a brand-new object copying every field from the validated input — schema_version, selected_path, personalization, cursor (rebuilt from cursor.phase_id and cursor.spot_id only), ladder, history. Since the validator has already proven the shape matches `State`, returning `{ ok: true, value: obj as unknown as State }` would be equivalent and shorter. The hand-rebuilt cursor in particular silently drops any extra properties on cursor (a subtle behavior change vs the rest of the object, which gets cast wholesale)."
+    ],
+    "impacts": [
+      "Cycle 1 chose the same hand-rolled approach in schemas/path.ts and schemas/phases.ts, so this is a consistency choice, not a one-off. Worth flagging because cycle 4's State will grow (ladder rung shape, history event enum, personalization narrowing) and the hand-rolled validator scales linearly while zod scales sublinearly.",
+      "Asymmetric handling: top-level extra fields would survive the cast (because `obj` is reused), but extra fields on `cursor` are stripped (because cursor is rebuilt). This is either an accidental data-loss bug for forward-compat schemas or an intentional but unstated normalization. Either way it is surprising. It also adds ~14 lines of allocation-on-the-hot-path code."
+    ],
+    "evidence": "return {\n    ok: true,\n    value: {\n      schema_version: obj['schema_version'] as number,\n      selected_path: obj['selected_path'] as string,\n      personalization: obj['personalization'] as Personalization,\n      cursor: {\n        phase_id: cursor['phase_id'] as string,\n        spot_id: cursor['spot_id'] as string,\n      },",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R4-006",
+      "R4-010"
+    ]
+  },
+  {
+    "cluster_id": "C025",
+    "title": "bootHarness accepts BootOptions.projectRoot but never uses it",
+    "file": "scripts/e2e/harness.ts",
+    "line_ranges": [
+      "13-17"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      4
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "simplicity"
+    ],
+    "recommendations": [
+      "Either drop the BootOptions parameter entirely (`bootHarness(): Promise<HarnessInstance>`), or repurpose it to genuinely scope the harness (e.g. default projectRoot baked into the returned callTool). The current shape is the worst of both worlds."
+    ],
+    "descriptions": [
+      "bootHarness receives `_options: BootOptions` containing a required `projectRoot` field, but the body never reads it — projectRoot flows in per-call via callTool's args. The parameter exists only because cycle 1's contract forced it through, and the rewrite kept it as dead weight."
+    ],
+    "impacts": [
+      "Callers must construct a BootOptions value with a projectRoot they know will be ignored, then pass projectRoot a second time on every callTool invocation. Confusing for downstream cycles (cycle 4 will boot the harness many times) and misleading at the type seam — looks like the harness is project-scoped when it is in fact stateless."
+    ],
+    "evidence": "interface BootOptions {\n  projectRoot: string;\n}\n\nexport async function bootHarness(_options: BootOptions): Promise<HarnessInstance> {",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R4-003"
+    ]
+  },
+  {
+    "cluster_id": "C026",
+    "title": "T-058 EACCES message regex tautologically matches the impl's hard-coded 'Failed to read' prefix",
+    "file": "tests/state.test.ts",
+    "line_ranges": [
+      "440-446"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      5
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "Tighten T-058 to assert the message contains the actual error code or the synthetic word 'permission' / 'access' separately, OR exclude the literal prefix from the haystack before regex-matching."
+    ],
+    "descriptions": [
+      "T-058 asserts the corrupt-EACCES message matches /read|permission|access/i. The implementation in state.ts unconditionally prefixes ALL non-ENOENT readFile errors with 'Failed to read state file: ...'. The literal substring 'read' inside that prefix satisfies the regex regardless of whether the impl actually distinguished EACCES from any other error code. An impl that classified all readFile errors uniformly (not branching on err.code) — i.e. exactly what the contract A6 'cycle-1 C002/C010 lesson' wants to prevent — would still pass this assertion solely on the literal prefix."
+    ],
+    "impacts": [
+      "The regression bar A6 cares about (treating ENOENT distinctly from EACCES/ENOTDIR with intelligible wording) is weaker than it appears. T-057 (ENOENT → absent) does enforce the branching, so the dimension is not unprotected, but the EACCES-specific message-quality check is effectively a no-op."
+    ],
+    "evidence": "expect(message).toMatch(/read|permission|access/i);",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R5-001"
+    ]
+  },
+  {
+    "cluster_id": "C027",
+    "title": "T-061 verifies call ORDER but not that fsync targets the fd that wrote the tmp bytes",
+    "file": "tests/state.test.ts",
+    "line_ranges": [
+      "540-585"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      5
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "Either (a) assert that the fsync spy's first argument is a numeric fd and that the same fd was returned by an open call observed before the fsync, or (b) augment the test to verify that on a synthetic crash (process abort between writeFile and fsync) the file is consistent. (b) is hard; (a) is feasible."
+    ],
+    "descriptions": [
+      "T-061 records invocationCallOrder for writeFile / fsync / rename and asserts writeFile < fsync < rename. The impl in state.ts calls `fsPromises.writeFile(tmpPath, ...)` (which opens its own internal fd, writes, closes), then opens a SEPARATE fd via `fs.openSync(tmpPath, 'r')` and fsyncs that read-only fd, then renames. Fsyncing a read-only fd that did not own the write is questionable — POSIX permits it but on some filesystems the durability guarantee depends on the writing fd being fsynced before close. The test passes despite this gap because it only correlates timestamps across spies, never verifying the fsync target matches the fd from the write."
+    ],
+    "impacts": [
+      "An impl that satisfies the call-order check but does not actually flush the buffer (e.g. fsyncs a stale fd) would still pass T-061. Contract A7 says 'fsync(fd) on the open tmp file' — the test cannot distinguish a meaningful fsync from a ceremonial one."
+    ],
+    "evidence": "expect(minWrite).toBeLessThan(minFsync); expect(minFsync).toBeLessThan(minRename);",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R5-003"
+    ]
+  },
+  {
+    "cluster_id": "C028",
+    "title": "T-067 does not verify the validator's `value` round-trips all input fields (only checks schema_version)",
+    "file": "tests/state.test.ts",
+    "line_ranges": [
+      "707-713"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      5
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "Add `expect((result as any).value).toEqual(input)` to T-067, or extend it to assert each top-level field deep-equals the input."
+    ],
+    "descriptions": [
+      "T-067 asserts `result.ok === true`, `result.value` is truthy, and `result.value.schema_version === 1`. The impl in schemas/state.ts reconstructs the value object by re-extracting fields (cursor is shallow-rebuilt with only phase_id/spot_id; ladder/history/personalization are typed-cast through). The test never verifies `value.cursor`, `value.ladder`, `value.history`, `value.personalization` against the input. An impl that returned `{ ok: true, value: { schema_version: 1 } as State }` (dropping every other field) would pass T-067. The integration is rescued by T-064 / T-094 round-tripping via JSON serialize, but those go through saveState→loadState, not validateState directly."
+    ],
+    "impacts": [
+      "validateState's contract per the contract.md schemas/state.ts entry is 'returns { ok: true, value: <input> }'. The current test does not enforce input → value field-fidelity at the validator boundary."
+    ],
+    "evidence": "expect((result as any).value.schema_version).toBe(1);",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R5-006"
+    ]
+  },
+  {
+    "cluster_id": "C029",
+    "title": "T-077 / T-083 archive-path reference assertion is over-permissive (JSON.stringify haystack)",
+    "file": "tests/start.tool.test.ts",
+    "line_ranges": [
+      "527-530"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      5
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "Split the assertion: explicitly assert warning.archivedTo === archivedTo (typed field present) AND optionally that the message references it. Same for T-083."
+    ],
+    "descriptions": [
+      "T-077 verifies the state-corrupt warning references the archive path by stringifying the entire warning object and checking the archivedTo string appears anywhere in the JSON. The mocked loadState supplies BOTH archivedTo AND a message containing archivedTo. Two structurally different impls pass: (a) carry archivedTo as a first-class field (contract intent), (b) drop the field but leave the path in the message string only. Neither does the inverse impl-defect (field present but mis-spelled message) get caught. Same shape applies to T-083's 'corrupt warning carries an archive reference' check."
+    ],
+    "impacts": [
+      "The contract A10 specifies the warning 'names the archive path' and the implementer chose to carry it as a typed field (good); a future refactor that drops the typed field while preserving the message would silently weaken consumers but pass the tests."
+    ],
+    "evidence": "const haystack = JSON.stringify(warning); expect(haystack).toContain(archivedTo);",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R5-002"
+    ]
+  },
+  {
+    "cluster_id": "C031",
+    "title": "T-085 stub server only records tool names — registerTools = (s) => s.tool('start', ...) with a no-op handler would pass",
+    "file": "tests/harness.mcp.test.ts",
+    "line_ranges": [
+      "111-133"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      5
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "Optional: extend T-085 to also assert the recorded entry has a function-typed handler argument (call[3] is a function) — would catch `s.tool('start')` with no handler. Not blocking."
+    ],
+    "descriptions": [
+      "T-085 instantiates a fake server whose `tool()` method just pushes the name into an array, then asserts `registered.includes('start')`. The handler argument and schema are discarded. Consequences: an impl that registers `start` with a handler that throws, returns the wrong shape, or ignores its arguments would pass T-085. Real handler exercise is via T-086/T-087 (real Client + InMemoryTransport), which IS the meaningful coverage. T-085 alone is essentially a name-presence assertion."
+    ],
+    "impacts": [
+      "Low — T-086/T-087 carry the actual integration weight. T-085 is a smoke test that the export exists and is callable, which is fine framing for the contract A12 'registers every cycle-1 + cycle-2 tool' requirement (it does prove the .tool() call site exists for `start`)."
+    ],
+    "evidence": "tool: (name: string, ..._rest: unknown[]) => { registered.push(name); }",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R5-005"
+    ]
+  },
+  {
+    "cluster_id": "C005",
+    "title": "Timestamp .replace(/\\./g, '.') is a no-op — likely a typo for ms-precision handling",
+    "file": "mcp/server/src/state.ts",
+    "line_ranges": [
+      "106-109"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      1
+    ],
+    "max_severity": "info",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "correctness"
+    ],
+    "recommendations": [
+      "Either remove the no-op .replace, or finish the original intent (e.g. .replace(/\\./g, '-') to make `.123Z` → `-123Z`, or .replace(/\\.\\d+Z$/, 'Z') to drop ms entirely). Add a comment explaining the chosen format."
+    ],
+    "descriptions": [
+      "The archive timestamp construction calls `.replace(/\\./g, '.')` which replaces every `.` with itself — a no-op. Read literally, the author intended to do something with the millisecond separator (e.g. strip the `.123Z` suffix, or replace `.` with `-`) and either forgot to finish or copy-pasted the colon-replacement pattern incorrectly. The downstream regex in T-051 accepts the resulting filename either way, so the test passes, but the code as written reveals a partial implementation thought."
+    ],
+    "impacts": [
+      "None functionally — archive filenames still match the test regex. Pure code-clarity concern; flags an incomplete edit that the consolidator should escalate to design dimension."
+    ],
+    "evidence": "const ts = now\n    .toISOString()\n    .replace(/:/g, '-')\n    .replace(/\\./g, '.');",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R1-007"
+    ]
+  },
+  {
+    "cluster_id": "C020",
+    "title": "AC-1.3 preserved on the new surface — verified clean",
+    "file": "mcp/server/src/tools/start.ts",
+    "line_ranges": [
+      "28-43"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      6
+    ],
+    "max_severity": "info",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "security"
+    ],
+    "recommendations": [
+      "No change. Future cycles adding state-write callers (cycle 4 selectPath/setPersonalization/nextSpot per the contract) must keep the early-return pattern intact. Consider a top-of-file invariant comment."
+    ],
+    "descriptions": [
+      "Traced through: when styleResult.ok === false, the function returns at line 33-39 with state: null BEFORE reaching the loadState call at line 43. No archiveCorruptFile, no fsPromises.mkdir under .sui-deepbook-course/, no fsPromises.writeFile, no fsPromises.rename are reached on this branch. AC-1.3's zero-write invariant from cycle 1 is preserved on the cycle-2 surface. Logging this as info to confirm the carry-forward review actually happened — the parent agent specifically asked me to trace through this, not just trust T-079/T-080."
+    ],
+    "impacts": [
+      "None — this is a positive verification."
+    ],
+    "evidence": "if (!styleResult.ok) {\n    const warnings: (RegistryWarning | StateWarning)[] = [...registry.warnings];\n    if (styleResult.warning) {\n      warnings.unshift(styleResult.warning);\n    }\n    return {\n      outputStyleOk: false,",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R6-006"
+    ]
+  },
+  {
+    "cluster_id": "C022",
+    "title": "SDK re-export through index.ts is pragmatic but couples library to harness",
+    "file": "mcp/server/src/index.ts",
+    "line_ranges": [
+      "8-12"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      4
+    ],
+    "max_severity": "info",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "simplicity"
+    ],
+    "recommendations": [
+      "Acceptable for now — the synthesis correctly picked the simpler tree. Revisit before any package-publish step: move the harness boot logic into mcp/server/src/harness.ts (matching worker-1's shape) and have scripts/e2e/harness.ts import only that, removing the SDK re-exports from index.ts."
+    ],
+    "descriptions": [
+      "index.ts re-exports `McpServer`, `Client`, and `InMemoryTransport` from @modelcontextprotocol/sdk specifically to give scripts/e2e/harness.ts a single import surface across the workspace boundary. The library is pulling its weight (per synthesis-notes.md, this is the load-bearing distinction between worker-2 and worker-1's harness.ts split), but it leaks SDK transport classes into the public surface of the server module — anything that imports `@sui-deepbook-course/mcp-server` now sees Client and InMemoryTransport in its namespace."
+    ],
+    "impacts": [
+      "Forward concern: when cycle 3+ adds publishing or a third-party consumer of the server package, those re-exports become public API surface that must be maintained. Worker-1's alternative (a dedicated mcp/server/src/harness.ts that the e2e script delegates to) keeps the seam internal."
+    ],
+    "evidence": "// Re-export SDK seams for the in-process harness so it can resolve all\n// classes from a single import without needing @modelcontextprotocol/sdk\n// installed at the workspace root.\nexport { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';\nexport { Client } from '@modelcontextprotocol/sdk/client/index.js';\nexport { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R4-008"
+    ]
+  },
+  {
+    "cluster_id": "C030",
+    "title": "start.tool.test.ts mocks state.js wholesale — T-077/T-078/T-080/T-082/T-083/T-084 are mapping tests, not integration",
+    "file": "tests/start.tool.test.ts",
+    "line_ranges": [
+      "42-56"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      5
+    ],
+    "max_severity": "info",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "No code change needed; surface this in the cycle's review notes so that any future trimming of harness.mcp.test.ts is recognized as a coverage regression."
+    ],
+    "descriptions": [
+      "Every cycle-2 assertion in start.tool.test.ts runs against `vi.mock('../mcp/server/src/state.js')` — loadState/saveState/STATE_SCHEMA_VERSION are stubs. This means tests T-077 (corrupt → warning + archive), T-078 (schema-mismatch → warning, no archive), T-082 (key set), T-083 (distinct kinds), and T-084 (message regexes) test only `runStart`'s mapping from a synthetic LoadStateResult onto the response — they do not exercise the real loadState, real archiving, or the real schema validator. Real integration is delegated to harness.mcp.test.ts T-089/T-090/T-091, which DO drive disk fixtures end-to-end. This is a deliberate split (and tests/state.test.ts handles state.ts in isolation), so the surface is covered, but a reviewer should not treat T-077..T-084 as proving the integration — they prove only the response-mapper."
+    ],
+    "impacts": [
+      "If the harness tests fail to actually round-trip through the real loadState (e.g. because the SDK shape changes silently), the start.tool.test.ts suite would still go green and no cycle-2 unit signal would catch the integration regression. T-089/T-090/T-091 are load-bearing."
+    ],
+    "evidence": "vi.mock('../mcp/server/src/state.js', () => ({ loadState: stateMock.loadState, ...",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R5-004"
+    ]
+  },
+  {
+    "cluster_id": "C032",
+    "title": "T-089 only checks archive existence count, not byte-for-byte content (state.test.ts T-048 covers this separately)",
+    "file": "tests/harness.mcp.test.ts",
+    "line_ranges": [
+      "242-244"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      5
+    ],
+    "max_severity": "info",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "Optional: add an extra assert in T-089 that `fs.readFileSync(archives[0], 'utf8') === <corrupt fixture bytes>`. Costs one read and matches the unit-suite assertion strength."
+    ],
+    "descriptions": [
+      "T-089 asserts `archives.length > 0` for the E-006 corrupt scenario through the harness — sufficient to prove the archive file appears. It does not verify the archive bytes equal the original corrupt fixture bytes. T-048 in tests/state.test.ts does verify byte-for-byte equality, so the property is asserted somewhere. But the harness scenario (which is the cycle-2 E-006 evidence) does not by itself catch a regression where the archive write becomes 0-byte or content-truncated when called through the MCP transport seam (a transport that swallowed bytes mid-flight, for instance). Different code path than the unit suite."
+    ],
+    "impacts": [
+      "Low — T-048 catches archive content fidelity in the unit pass. Cycle 4+ readers of E-006 should not assume the harness scenario alone proves byte-fidelity."
+    ],
+    "evidence": "const archives = listArchives(projectRoot); expect(archives.length).toBeGreaterThan(0);",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R5-007"
+    ]
+  },
+  {
+    "cluster_id": "C033",
+    "title": "T-088 source-grep guard misses dynamic-import / aliased-name evasions of `runStart`",
+    "file": "tests/harness.mcp.test.ts",
+    "line_ranges": [
+      "196-211"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      5
+    ],
+    "max_severity": "info",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "Optional: add a regex for `import\\(['\"][^'\"]*tools/start` covering the dynamic-import form. Not blocking."
+    ],
+    "descriptions": [
+      "T-088 reads scripts/e2e/harness.ts as text and applies three regex guards: no `import { runStart }` binding, no path containing `tools/start`, no `if (toolName === 'start')` branch. None of these catch (a) a dynamic `await import('../../mcp/server/src/tools/start.js')` whose result is destructured under a non-`runStart` name, or (b) an aliased import like `import { runStart as foo }` which does match the brace regex but only because `runStart` is the original token — fine; however, `import * as start from '../../mcp/server/src/tools/start.js'` would slip the second regex if the import path uses `tools/start.js` exactly... actually it would match. The dynamic-import path is the real evasion vector. Contract A13 wants 'adding a new tool to registerTools is sufficient'; the regex guards are a heuristic, not a proof."
+    ],
+    "impacts": [
+      "Low — the harness as written cleanly uses only registerTools + Client. A future contributor circumventing the guard via dynamic import would pass T-088 silently while violating A13."
+    ],
+    "evidence": "expect(/from\\s+['\"][^'\"]*tools\\/start/.test(content)).toBe(false);",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R5-008"
+    ]
+  }
+]

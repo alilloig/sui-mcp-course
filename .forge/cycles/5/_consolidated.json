@@ -1,0 +1,1236 @@
+[
+  {
+    "cluster_id": "C001",
+    "title": "verifySpot pass-but-saveState-failed `error` field is silently dropped on rung-3 path",
+    "file": "mcp/server/src/tools/requestHint.ts",
+    "line_ranges": [
+      "281-295",
+      "265-278",
+      "283-288"
+    ],
+    "agreement_count": 2,
+    "reviewers": [
+      1,
+      3
+    ],
+    "max_severity": "high",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "correctness",
+      "error-handling"
+    ],
+    "recommendations": [
+      "Either widen AutoVerifyResult to include an optional `error?: string` field passed through from verifyResult.error, or document explicitly in the contract that downstream verify errors are intentionally suppressed at the requestHint boundary. The first option is small and matches the M002 carry-forward's intent of surfacing state-save-failed everywhere.",
+      "Remove the line. If intended to gate response on save success, replace with the existing try/catch (which already returns early on rejection).",
+      "Add an optional `error?: string` to AutoVerifyResult and forward `verifyResult.error` into it. Alternatively surface the verifySpot persist failure as a top-level `state-save-failed` error on the rung-3 response, since the cycle as a whole did not durably persist the cursor advance."
+    ],
+    "descriptions": [
+      "After dispatching runVerifySpot in the rung-3 path, the handler builds AutoVerifyResult as { pass, advanced, output } and ignores verifyResult.error. runVerifySpot can return error fields in three cases: (a) outputStyleOk gate flipped between requestHint's gate and the dispatched verify; (b) M002 'verification passed but state persist failed' (verifyResult: { pass: true, advanced: false, error: '...' }); (c) M001 VerificationModeUnsupportedError mapped to error string. In all three cases the student sees autoVerifyResult.{pass, advanced} but no diagnostic of why advanced=false despite pass=true (case b) or why pass=false (cases a/c).",
+      "Line 266 declares `let savedState = newState;` but the variable is never read. The variable was likely intended to flow through to the `runVerifySpot` dispatch or to compute the post-save ladder, but `runVerifySpot` re-loads from disk and the response uses `newLadder` derived directly from `newState`. Dead assignment.",
+      "When the dispatched runVerifySpot returns `{ pass: true, advanced: false, error: 'verification passed but state persist failed: …' }` (the M002 carry-forward branch in verifySpot.ts lines 96-103), requestHint's autoVerifyResult only forwards `pass`, `advanced`, `output`. The `error` string is discarded. AutoVerifyResult does not even declare an `error` field. The student sees `autoVerifyResult: { pass: true, advanced: false }` with no explanation that the cursor failed to advance because state.json could not be persisted."
+    ],
+    "impacts": [
+      "Observability gap, not a functional defect. The student/agent can still re-attempt verifySpot. But for case (b) — saveState failed during cursor advance — the student has no signal that the cursor failure was a persistence issue (recoverable on retry) vs a verification failure (requires editing). The course-conductor agent will narrate 'verification did not advance' without context.",
+      "No functional impact. Suggests an aborted refactor or copy-paste residue.",
+      "Silent partial failure on a load-bearing path. A successful verification that fails to commit advancement looks identical to a normal pass-without-advance, which is misleading. The student/agent will wonder why the cursor did not move and may retry verification, masking the underlying disk error (EACCES/ENOSPC on .sui-deepbook-course)."
+    ],
+    "evidence": "  const autoVerifyResult: AutoVerifyResult = {\n    pass: verifyResult.pass,\n    advanced: verifyResult.advanced ?? false,\n    output: verifyResult.output,\n  };",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R1-001",
+      "R1-005",
+      "R3-002"
+    ]
+  },
+  {
+    "cluster_id": "C003",
+    "title": "rung-3 cursor advance delegated to nested runVerifySpot — couples + double-loads",
+    "file": "mcp/server/src/tools/requestHint.ts",
+    "line_ranges": [
+      "281-296"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      2
+    ],
+    "max_severity": "high",
+    "min_severity": "high",
+    "disputed_severity": false,
+    "categories": [
+      "design"
+    ],
+    "recommendations": [
+      "Compose primitives, not tools. Inside requestHint after the auto-write+saveState succeeds, call runVerification(spec, projectRoot, opts) directly, then on pass call advanceCursor(state-with-rung3-flags, phasesData) once and saveState once — single transactional commit covering both auto_completed AND cursor advance. Keep runVerifySpot as the public entry for the verifySpot tool. Bonus: the dead 'savedState' / dead 'advanceCursor' import become live and meaningful again."
+    ],
+    "descriptions": [
+      "After the rung-3 snapshot+overwrite+saveState block, requestHint dispatches the entire runVerifySpot tool handler in-process (not just runVerification). runVerifySpot then re-runs probeOutputStyle, re-loads state from disk (which was just written one statement earlier), re-loads phases, re-fetches getCurrentSpot, re-checks the verification spec, runs runVerification, advances cursor, and saves state again. So the rung-3 happy path performs: 1 outputStyleOk gate (requestHint) + 1 outputStyleOk gate (verifySpot, redundant) + 2 loadState round-trips + 2 loadPhases round-trips + 2 saveState commits. The contract said 'dispatches runVerifySpot' but the right primitive to compose is runVerification (or an internal advance helper), not the whole tool. The synthesis-notes already flagged the operational consequence: T-095 had a 'stale-state bug' because the test mock could not model the disk round-trip between requestHint's saveState and verifySpot's loadState — production correctness depends on disk consistency, which is fragile."
+    ],
+    "impacts": [
+      "Two concurrent failure modes: (a) if the second saveState (inside verifySpot) fails after the first one succeeded, auto_completed is on disk but the cursor advance silently rolled back — the response says advanced:false but disk and response agree only by accident; (b) outputStyleOk could legitimately flip to false between requestHint's gate and verifySpot's redundant gate (a settings.json edit), surfacing 'output-style-disabled' inside autoVerifyResult.error in a way callers won't expect. The double-IO also doubles the disk-failure surface that M002 was trying to harden."
+    ],
+    "evidence": "  // (e) Dispatch runVerifySpot to auto-verify the written file\n  const verifyResult = await runVerifySpot({ projectRoot }, opts);",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R2-001"
+    ]
+  },
+  {
+    "cluster_id": "C007",
+    "title": "Rung-3 saveState failure leaves auto_completed un-persisted while side effects are committed — violates AC-5.4",
+    "file": "mcp/server/src/tools/requestHint.ts",
+    "line_ranges": [
+      "280-288",
+      "262-278",
+      "265-278"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      3
+    ],
+    "max_severity": "high",
+    "min_severity": "medium",
+    "disputed_severity": false,
+    "categories": [
+      "error-handling"
+    ],
+    "recommendations": [
+      "Wrap the runVerifySpot dispatch in try/catch; on rejection, return `{ ok: true, payload, newLadder, autoVerifyResult: { pass: false, advanced: false, output: <error message> } }` (or a new `auto-verify-failed` error kind) so callers see a structured response and the auto_completed=true persistence is acknowledged.",
+      "Either (a) treat saveState failure on rung-3 as a partial success — log the failure but return `autoVerifyResult` with a synthetic error explaining that snapshot+overwrite committed but persistence did not; or (b) on saveState rejection attempt to roll back target_file from the snapshot before returning. (a) is closer to existing semantics and matches verifySpot.ts's `pass: true, advanced: false, error: …` precedent.",
+      "On saveState rejection in the rung-3 path, attempt to copy `.bak` back over target_file before returning. If the rollback also fails, surface a richer error message naming both file paths so the user can recover manually. The atomicity claim in the contract is best-effort across snapshot+overwrite, but saveState failure is a synchronously-recoverable case."
+    ],
+    "descriptions": [
+      "After snapshot+overwrite+saveState succeed in rung-3, requestHint dispatches `runVerifySpot({ projectRoot }, opts)` with no surrounding try/catch. runVerifySpot deliberately re-throws any verification error that is not a VerificationModeUnsupportedError (verifySpot.ts line 87 `throw err`), so an unexpected exception from runVerification (e.g. a spawnFn that rejects synchronously with an unusual error class, or a future verification adapter that throws something other than VerificationModeUnsupportedError) propagates as a rejected promise out of runRequestHint. The MCP transport then reports a generic transport error rather than a structured `{ ok: false, error: { kind: 'auto-write-failed' | … } }` response, even though the snapshot, target_file overwrite, and state mutation have already been committed.",
+      "On rung-3, runAutoWrite has already snapshotted the .bak and overwritten target_file when saveState is called. If saveState rejects (EACCES/ENOSPC), requestHint returns `{ ok: false, error: { kind: 'state-save-failed', … } }` and exits — but on disk: (a) target_file is permanently overwritten, (b) `.bak` exists with the original, (c) state.json's ladder still records `auto_completed: false`. The contract Behavior section explicitly says \"auto_completed is set as soon as the rung-3 read+write+flip atomic block completes — the only way to 'not set' it is for the read or snapshot or overwrite to fail before the flag flip\". Here the flip succeeded in memory, but disk does not reflect it. AC-5.4 is therefore violated under saveState failure.",
+      "When saveState rejects after a successful runAutoWrite, the snapshot file (`.bak`) holds the original bytes and target_file holds the new bytes — but the engine makes no attempt to roll target_file back to the snapshot before returning state-save-failed. The student is left with their source modified to the auto.md payload, with no surfaced affordance that recovery requires copying `.bak` back over target_file. Contract Behavior says \"a crash mid-overwrite leaves both the snapshot and the (partially written) target_file recoverable by hand\" — but a saveState failure is a process-level failure, not a crash, and the engine can synchronously roll back the writeFile."
+    ],
+    "impacts": [
+      "Caller loses the structured failure shape that the contract promises (A2 says every documented branch returns `{ ok: false, error: { kind } }`). The student/agent never learns the auto-write committed; on retry the rotation logic will overwrite the only recoverable snapshot. Defense-in-depth that M001 added at verifySpot.ts is bypassed here because requestHint is the OUTER boundary on the rung-3 path.",
+      "A retry of `requestHint({ rung: 3 })` is allowed (gating only checks reference_shown). The retry will rotate the existing `.bak` (containing the ORIGINAL bytes) to `.bak.<ts>` and snapshot the now-overwritten target_file as the new `.bak`. The original is still recoverable but only via the rotated copy. More confusingly, the ladder state on disk does not accurately reflect that an auto-write attempt committed real side effects.",
+      "After a saveState rejection, the student sees their source mutated, no cursor advance, and a vague `state-save-failed` error — they may not realize that a recoverable `.bak` exists. Most likely class of failure (EACCES on .sui-deepbook-course because of parent-dir perms, ENOSPC) is exactly the case where the user is least equipped to recover by hand."
+    ],
+    "evidence": "  } catch (err) {\n    const e = err as Error;\n    return {\n      ok: false,\n      error: {\n        kind: 'state-save-failed',\n        message: `state-save-failed: ${e.message}`,\n      },\n    };\n  }",
+    "confidence_spread": [
+      "high",
+      "medium"
+    ],
+    "source_ids": [
+      "R3-001",
+      "R3-003",
+      "R3-006"
+    ]
+  },
+  {
+    "cluster_id": "C012",
+    "title": "Path traversal via spot.rungs.* lets engine read arbitrary files into payload",
+    "file": "mcp/server/src/tools/requestHint.ts",
+    "line_ranges": [
+      "176-203"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      6
+    ],
+    "max_severity": "high",
+    "min_severity": "high",
+    "disputed_severity": false,
+    "categories": [
+      "security"
+    ],
+    "recommendations": [
+      "Resolve `path.join(projectRoot, 'paths', slug, rungRelPath)` with path.resolve and assert the result is contained inside `path.resolve(projectRoot, 'paths', slug) + path.sep`. Reject with rung-content-missing kind (or a new rung-path-invalid kind) on violation. Apply the same containment check to the fallback canonical path. Validate slug against a slug regex at selectPath time (currently selected_path is stored verbatim from path.json with no shape check — see registry/scan code)."
+    ],
+    "descriptions": [
+      "When spot.rungs is declared, requestHint reads the rung markdown via `path.join(projectRoot, 'paths', slug, rungRelPath)`. The phases.ts validator (lines 220-227) accepts rungs.hint_md / reference_md / auto_write_md as ANY string. A phases.json that sets `auto_write_md: '../../../../etc/passwd'` causes the engine to readFile arbitrary system files, run substitutePromptOnly over the contents, and (for rung 3) splice them into spot.target_file. The fallback path (line 189) also embeds spot.id and slug without traversal checks. This is a confused-deputy: the MCP server reads with its own (user-level) privileges, then writes the result wherever spot.target_file points (R6-001). Together, R6-001+R6-002+R6-003 form a complete arbitrary-read + arbitrary-write primitive, gated only on the student saying 'yes' to rung 3."
+    ],
+    "impacts": [
+      "Sensitive local files (~/.aws/credentials, .env, ~/.ssh/id_rsa, ~/.config/Claude, etc.) become readable AND get spliced into a target_file the attacker also controls — potentially a publicly-served file (a README the student commits, a build artifact uploaded to npm, a frontend bundle hot-reloaded by Next.js). The rung-3 payload also flows through substitutePromptOnly, which could mangle binary content but reproduces text payloads byte-for-byte."
+    ],
+    "evidence": "const rungContentPath = rungRelPath\n    ? path.join(projectRoot, 'paths', slug, rungRelPath)\n    : path.join(projectRoot, 'paths', slug, 'rungs', spot.id, rungFile);",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R6-003"
+    ],
+    "resolved": true,
+    "resolution": "Fixed in round-2 remediation: added mcp/server/src/pathSafety.ts (containedPath helper using path.resolve + at-or-under containment check), wired through ladder.ts (target_file + spot.id snapshot path) and tools/requestHint.ts (rung content readFile). Added SLUG_REGEX validation in schemas/phases.ts for spot.id, target_file, and rungs.{hint_md,reference_md,auto_write_md}. Extended AutoWriteFailedWarning.kind_detail union with 'path-traversal'. 400/401 tests still pass."
+  },
+  {
+    "cluster_id": "C021",
+    "title": "Path traversal via spot.target_file allows arbitrary file overwrite",
+    "file": "mcp/server/src/ladder.ts",
+    "line_ranges": [
+      "133"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      6
+    ],
+    "max_severity": "high",
+    "min_severity": "high",
+    "disputed_severity": false,
+    "categories": [
+      "security"
+    ],
+    "recommendations": [
+      "Before opening the target file, resolve it with path.resolve(projectRoot, spot.target_file) and assert the resolved path starts with projectRoot + path.sep (and is not equal to projectRoot). Reject with AutoWriteError kind:'target-path-outside-project' otherwise. Reject path.isAbsolute(spot.target_file) explicitly. Same check needs to apply to the rung-content path in requestHint.ts (R6-003). The contract's A2/A7 'literal-from-manifest' phrasing should not be read as 'no validation' — the literal-substitution rule is about NOT applying personalization, not about waiving path safety."
+    ],
+    "descriptions": [
+      "runAutoWrite computes the target file path with `path.join(projectRoot, spot.target_file!)` and passes the result directly to fsPromises.readFile / fsPromises.writeFile with no boundary check. The phases schema validator (mcp/server/src/schemas/phases.ts:194) only checks that target_file is a string — it accepts any value, including '../../../etc/cron.d/evil' or absolute paths like '/etc/passwd'. Because path.join preserves '..' segments, a malicious phases.json (or one shipped by a third-party learning-path package the user installs) makes runAutoWrite read and overwrite arbitrary files outside projectRoot. Combined with R6-003's read-side traversal, this becomes a full read-then-write primitive that exfiltrates system files into student-controlled buffers and clobbers writable files anywhere on the filesystem."
+    ],
+    "impacts": [
+      "Any phases.json that the engine consumes — including curriculum content authored by third parties or contributed via PRs to a course repo — can write arbitrary content to any file the MCP server process can write to. The auto-write fires the moment the student opts into rung 3, with no further confirmation. In an LLM-driven flow where the learner may not even read the proposed change, this is a silent fs.writeFile to attacker-chosen paths."
+    ],
+    "evidence": "const targetFilePath = path.join(projectRoot, spot.target_file!);",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R6-001"
+    ],
+    "resolved": true,
+    "resolution": "Fixed in round-2 remediation: added mcp/server/src/pathSafety.ts (containedPath helper using path.resolve + at-or-under containment check), wired through ladder.ts (target_file + spot.id snapshot path) and tools/requestHint.ts (rung content readFile). Added SLUG_REGEX validation in schemas/phases.ts for spot.id, target_file, and rungs.{hint_md,reference_md,auto_write_md}. Extended AutoWriteFailedWarning.kind_detail union with 'path-traversal'. 400/401 tests still pass."
+  },
+  {
+    "cluster_id": "C022",
+    "title": "Path traversal via spot.id allows snapshot write outside snapshots directory",
+    "file": "mcp/server/src/ladder.ts",
+    "line_ranges": [
+      "187-209"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      6
+    ],
+    "max_severity": "high",
+    "min_severity": "high",
+    "disputed_severity": false,
+    "categories": [
+      "security"
+    ],
+    "recommendations": [
+      "Validate spot.id against a strict slug regex at phases-load time (e.g. /^[a-z0-9][a-z0-9_-]*$/) — reject any id with '/', '..', '\\', or starting with '.' Apply the same regex to phase.id. Additionally, after computing bakPath, assert `path.resolve(bakPath).startsWith(path.resolve(snapshotsDir) + path.sep)`. Same check applies to the rotated path `${bakPath}.${ts}`. Surface AutoWriteError kind:'snapshot-path-invalid' on violation."
+    ],
+    "descriptions": [
+      "The snapshot path is built as `path.join(snapshotsDir, ${spot.id}.bak)`. The phases.ts validator only checks that spot.id is a string (line 175). A malicious phases.json with `id: '../../../tmp/evil'` causes the snapshot writeFile to land at `<projectRoot>/.sui-deepbook-course/tmp/evil.bak` (or worse, outside projectRoot if more '..' segments are used). The contract A7 explicitly states the snapshot path is 'literal <projectRoot>/.sui-deepbook-course/snapshots/<spot.id>.bak' and that 'spot.id is the manifest slug, not a personalization key' — but the implementation never enforces that spot.id IS a slug-shaped string. The .bak file is created with mode 0o600 + wx flag, which limits some scenarios, but the directory-creation step (mkdir -p snapshotsDir) does not protect against the .bak path itself escaping. If an existing file at the resolved path exists, the wx flag fails closed (good); but if the path is novel, the write succeeds anywhere the process can write. The rotation step (rename bakPath → bakPath + '.<ts>') likewise carries the traversal forward."
+    ],
+    "impacts": [
+      "A malicious phases.json can plant 0o600 files anywhere the MCP server process can write, including dotfiles, ~/.ssh/, /tmp seeded with attacker content (then included via subsequent reads), or known-pollutable XDG paths. Even in the benign case, a course author who picks an unfortunate spot.id (e.g. one containing a '/') silently breaks the snapshot location with no error surfaced to the student."
+    ],
+    "evidence": "const bakPath = path.join(snapshotsDir, `${spot.id}.bak`);",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R6-002"
+    ],
+    "resolved": true,
+    "resolution": "Fixed in round-2 remediation: added mcp/server/src/pathSafety.ts (containedPath helper using path.resolve + at-or-under containment check), wired through ladder.ts (target_file + spot.id snapshot path) and tools/requestHint.ts (rung content readFile). Added SLUG_REGEX validation in schemas/phases.ts for spot.id, target_file, and rungs.{hint_md,reference_md,auto_write_md}. Extended AutoWriteFailedWarning.kind_detail union with 'path-traversal'. 400/401 tests still pass."
+  },
+  {
+    "cluster_id": "C023",
+    "title": "AutoWriteFailedWarning uses non-standard 'kind_detail' field; breaks discriminated-union convention",
+    "file": "mcp/server/src/warnings.ts",
+    "line_ranges": [
+      "107-112"
+    ],
+    "agreement_count": 3,
+    "reviewers": [
+      1,
+      2,
+      6
+    ],
+    "max_severity": "medium",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "correctness",
+      "design"
+    ],
+    "recommendations": [
+      "Either flatten kind_detail values into the discriminant (e.g. `kind: 'auto-write-target-file-missing' | ...`) or add a contract amendment noting the kind_detail rename. Lowest-friction fix: add a code comment explaining the rename's reason.",
+      "Either expand the union to four kinds ('auto-write-target-file-missing', 'auto-write-target-range-invalid', 'auto-write-snapshot-write-failed', 'auto-write-overwrite-failed'), or rename `kind_detail` → `reason: AutoWriteErrorKind` to keep the four-mode field but stop colliding with the union convention. The AutoWriteError class in ladder.ts already has a `kind` field of the right shape; the warning interface should mirror it as `reason`, not as `kind_detail`.",
+      "Either rename to match (and adjust the contract) or document the rename explicitly in warnings.ts so consumers know the detail kind lives at .kind_detail. Mention in a follow-up ADR."
+    ],
+    "descriptions": [
+      "Contract A.warnings.ts entry says: `auto-write-failed (carries `spotId: string`, `kind: 'target-file-missing' | 'target-range-invalid' | 'snapshot-write-failed' | 'overwrite-failed'`, `message: string`)`. The implementation uses `kind: 'auto-write-failed'` as the union discriminant and renames the inner classifier to `kind_detail` (a non-standard suffix). This diverges from the contract literal but resolves a discriminated-union conflict the contract didn't anticipate (two `kind` fields with different semantics on one interface). The warning type is also currently never emitted at runtime — `requestHint` returns errors via its own discriminated union, not as EngineWarning instances — so the type is documentation-only.",
+      "Every other warning interface in this file follows the discriminated-union convention `kind: '<literal>'` as the unique discriminator, plus message + kind-specific scalar fields. AutoWriteFailedWarning uniquely introduces a second field named `kind_detail` for what is really a sub-discriminator. The auto-write error space has TWO orthogonal axes (the warning-kind axis = 'auto-write-failed' and the failure-mode axis = target-file-missing | target-range-invalid | snapshot-write-failed | overwrite-failed), and the right encoding is either (a) four sibling literal kinds in the same union, or (b) a separate `reason: '...' ` field — `kind_detail` is neither, and TS callers narrowing on `w.kind === 'auto-write-failed'` won't get exhaustiveness checking on the four sub-modes.",
+      "Contract A12 specifies that auto-write-failed carries `kind: 'target-file-missing' | ...` as an inner discriminator alongside spotId and message. The implementation renames the inner field to `kind_detail` to avoid colliding with the outer EngineWarning discriminator `kind: 'auto-write-failed'`. This is a reasonable engineering choice but diverges from the contract literally and means downstream consumers reading the contract will look for `warning.kind === 'target-file-missing'` and not find it. Not a security issue per se; flagging as a documentation/consumer mismatch the consolidator may want to track."
+    ],
+    "impacts": [
+      "Cosmetic / contract-text drift only. Future code that emits this warning shape will need to use `kind_detail` instead of the contract-suggested nested `kind`, slightly more friction for consumers.",
+      "Breaks the symmetric pattern that lets reviewers/tools grep `kind: '...'` to enumerate the warning surface (cycle-4 A12 grep target). Future contributors will copy the pattern and accumulate ad-hoc sub-discriminators (kind_detail, kind_subkind, etc.). Loses TS exhaustiveness on a 4-branch space that genuinely needs it.",
+      "Future code that handles auto-write-failed warnings according to the contract will silently miss the detail field. No current consumer; auto-write-failed is currently surfaced inside requestHint's error.message as a string formatted '(<kind>): <message>', not as a structured warning emission."
+    ],
+    "evidence": "export interface AutoWriteFailedWarning {\n  kind: 'auto-write-failed';\n  spotId: string;\n  kind_detail: 'target-file-missing' | 'target-range-invalid' | 'snapshot-write-failed' | 'overwrite-failed';\n  message: string;\n}",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R1-007",
+      "R2-003",
+      "R6-007"
+    ]
+  },
+  {
+    "cluster_id": "C004",
+    "title": "advanceCursor and savedState are imported/declared but never used",
+    "file": "mcp/server/src/tools/requestHint.ts",
+    "line_ranges": [
+      "4,266"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      2
+    ],
+    "max_severity": "medium",
+    "min_severity": "medium",
+    "disputed_severity": false,
+    "categories": [
+      "design"
+    ],
+    "recommendations": [
+      "Drop `advanceCursor` from the imports, drop the `let savedState = newState;` declaration. Tighten tsconfig with noUnusedLocals: true so the next dead-symbol regression fails CI on its own."
+    ],
+    "descriptions": [
+      "Line 4 imports `advanceCursor` from phaseEngine.js; the symbol is referenced nowhere in the file. Line 266 declares `let savedState = newState;` and the variable is never read again — `newState` is the only thing used past that point. Both are byproducts of the design tension flagged in R2-001: the author started threading cursor-advance into requestHint locally (which would have used advanceCursor and the savedState binding meaningfully), then pivoted to delegating the whole flow to runVerifySpot, but didn't clean up the leftover symbols. tsc --noEmit under strict:true should be flagging the unused import; the project's tsconfig must have noUnusedLocals/noUnusedParameters off."
+    ],
+    "impacts": [
+      "Dead symbols are a clear signal of an incomplete refactor. Future maintainers reading line 4 will assume requestHint owns its own cursor advance (it doesn't — verifySpot does); reading line 266 will assume there's a re-save of savedState somewhere (there isn't). Wastes review time on every future edit. Also a hint that strict-mode lints are loose, which compounds across the codebase."
+    ],
+    "evidence": "import { loadPhases, getCurrentSpot, advanceCursor } from '../phaseEngine.js';\n…\n  let savedState = newState;",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R2-002"
+    ]
+  },
+  {
+    "cluster_id": "C005",
+    "title": "outputStyleOk gate produces four different failure shapes across five tools",
+    "file": "mcp/server/src/tools/requestHint.ts",
+    "line_ranges": [
+      "80-90"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      2
+    ],
+    "max_severity": "medium",
+    "min_severity": "medium",
+    "disputed_severity": false,
+    "categories": [
+      "design"
+    ],
+    "recommendations": [
+      "Extract `assertOutputStyleOk()` returning a `{ ok: true } | { ok: false; warning: OutputStyleDisabledWarning }` and let each tool map the warning to its own shape via one liner. Better yet, give all five tools a uniform 'gate failed' shape (e.g., always `{ ok: false, gate: 'output-style-disabled' }` as an additive field) so the skill can treat the gate generically. Tightening this is also necessary to make the orphan OutputStyleDisabledWarning from R2-004 actually live."
+    ],
+    "descriptions": [
+      "Same gate, five tools, four distinct response shapes for the same condition: selectPath/setPersonalization → `{ ok: false, errors: ['output-style-disabled'] }`; nextSpot → `{ done: false, error: 'output-style-disabled' }`; verifySpot → `{ pass: false, error: 'output-style-disabled', advanced: false }`; requestHint → `{ ok: false, error: { kind: 'output-style-disabled', message: '…' } }`. The skill (and the course-conductor agent that calls these) has to encode the shape switch per tool. The gate body itself is also copy-pasted five times with subtly different message strings; one site uses 'output-style-disabled: learning-output-style plugin is not enabled' (requestHint) and the others use the bare kind literal."
+    ],
+    "impacts": [
+      "Conductor logic that wants to detect 'gate failed and tell the student to enable the plugin' has to know four shapes. A single helper would have caught the pattern; instead it's been pasted with drift. Cycle-4 R2-004 already flagged the four-tool state-load preamble as a duplication hazard; cycle 5 added a fifth tool and made the duplication five-fold without abstracting."
+    ],
+    "evidence": "  const styleCheck = await probeOutputStyle();\n  if (!styleCheck.ok) {\n    return {\n      ok: false,\n      error: {\n        kind: 'output-style-disabled',\n        message: 'output-style-disabled: learning-output-style plugin is not enabled',\n      },\n    };\n  }",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R2-005"
+    ]
+  },
+  {
+    "cluster_id": "C008",
+    "title": "Rung-3 auto-write writes payload with unresolved {{ ... }} placeholders when personalization key is missing",
+    "file": "mcp/server/src/tools/requestHint.ts",
+    "line_ranges": [
+      "205-240",
+      "241-259"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      3
+    ],
+    "max_severity": "medium",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "error-handling"
+    ],
+    "recommendations": [
+      "Before calling runAutoWrite on rung 3, scan the substituted payload for any remaining `\\{\\{\\s*[a-zA-Z_]` matches and short-circuit with a new `personalization-missing` error kind that names the unresolved key. Rung 1 / rung 2 paths can keep the leave-intact behavior (the payload is rendered as documentation, not committed to source).",
+      "Add an optional `subKind?: AutoWriteErrorKind` to RequestHintError and forward `err.kind` when err is an AutoWriteError. The discriminator stays at `'auto-write-failed'` for compatibility but the granular kind is reachable by callers."
+    ],
+    "descriptions": [
+      "substitutePromptOnly intentionally leaves unknown `{{ key }}` placeholders intact (personalization.ts line 137 returns `_match`). Rung-3 reads auto.md, calls substitutePromptOnly with `state.personalization`, then passes the result to runAutoWrite which writes those bytes verbatim into target_file. If the student never called setPersonalization (or the path's personalization_options grew between cycles), payload retains literal `{{ pool_subset }}` substrings. Auto-write succeeds; pnpm build then fails with a syntax error in the user's `.tsx` source. The student gets a build failure instead of a structured `personalization-missing` error, and the snapshot rotation has already consumed one .bak slot.",
+      "When runAutoWrite rejects with AutoWriteError, requestHint maps every sub-kind ('target-file-missing', 'target-range-invalid', 'snapshot-write-failed', 'overwrite-failed') into a single 'auto-write-failed' error kind with the sub-kind embedded only in the human-readable message. AutoWriteError.kind is the existing structured discriminator; collapsing it loses programmatic recovery affordances (e.g. the agent cannot tell apart \"path data is wrong\" from \"disk is full\" without parsing the message string)."
+    ],
+    "impacts": [
+      "Silent failure in a load-bearing path: the user's source file is overwritten with unresolved templating, target_file is corrupt, and the failure surfaces as a downstream build error rather than as `requestHint`'s structured failure. Contract A10 requires substitution scope discipline but does not require pre-write validation; the silent placeholder retention is a real foot-gun on the rung-3 surface.",
+      "Reduced debuggability and harder remediation logic for the conductor agent: it has to regex-parse the message to know whether to ask the user to free space, fix the manifest, or report a config bug. Contract A7 distinguishes the four AutoWriteErrorKind values for a reason."
+    ],
+    "evidence": "    if (err instanceof AutoWriteError) {\n      return {\n        ok: false,\n        error: {\n          kind: 'auto-write-failed',\n          message: `auto-write-failed (${err.kind}): ${err.message}`,\n        },\n      };\n    }",
+    "confidence_spread": [
+      "medium",
+      "high"
+    ],
+    "source_ids": [
+      "R3-004",
+      "R3-007"
+    ]
+  },
+  {
+    "cluster_id": "C024",
+    "title": "Three new warning kinds are exported but never constructed — orphan union members",
+    "file": "mcp/server/src/warnings.ts",
+    "line_ranges": [
+      "101-122"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      2
+    ],
+    "max_severity": "medium",
+    "min_severity": "medium",
+    "disputed_severity": false,
+    "categories": [
+      "design"
+    ],
+    "recommendations": [
+      "Either (a) wire requestHint, selectPath, setPersonalization, verifySpot to actually emit { kind: 'state-save-failed', message } / { kind: 'auto-write-failed', spotId, reason, message } / { kind: 'output-style-disabled', tool } as part of their structured failures (would also unify the four current ad-hoc shapes), or (b) drop the three new interfaces from EngineWarning until a real producer exists. Pick one; the current state is the worst of both — schema bloat without runtime use."
+    ],
+    "descriptions": [
+      "Cycle-5 added StateSaveFailedWarning, AutoWriteFailedWarning, OutputStyleDisabledWarning to EngineWarning. None of the production tool code actually constructs an EngineWarning literal of these kinds. selectPath.ts/setPersonalization.ts emit `errors: [\\`state-save-failed: ${e.message}\\`]` (a string in a string array, not an object with kind). verifySpot.ts emits `error: 'output-style-disabled'` (bare string). requestHint.ts emits its own discriminated RequestHintError shape (own kind union, own message). No path through the engine ever produces { kind: 'state-save-failed', message: ... } as a typed EngineWarning. This is the exact same shape that cycle-3 R1-003/R2-001/M002 + cycle-4 R2-002 (worker-2's previous review on me) flagged for RegistryWarning: declared union members with no producer."
+    ],
+    "impacts": [
+      "Defeats the discriminated-union promise: callers handling `EngineWarning` get type-narrowed to branches that runtime never reaches. Tests T-085/T-086/T-087 assert the literals are present in the source file via grep — passing those tests proves nothing about the producer surface. Continues a multi-cycle pattern of warnings.ts drifting away from registry.ts's actual emission surface."
+    ],
+    "evidence": "// Cycle-5 non-registry warnings\nexport interface StateSaveFailedWarning {\n  kind: 'state-save-failed';\n  message: string;\n}\n…\nexport interface OutputStyleDisabledWarning {\n  kind: 'output-style-disabled';\n  tool: string;\n}",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R2-004"
+    ]
+  },
+  {
+    "cluster_id": "C002",
+    "title": "spot.rungs path resolution has dual-mode ambiguity (manifest path vs canonical fallback)",
+    "file": "mcp/server/src/tools/requestHint.ts",
+    "line_ranges": [
+      "175-189",
+      "176-189"
+    ],
+    "agreement_count": 2,
+    "reviewers": [
+      1,
+      2
+    ],
+    "max_severity": "low",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "correctness",
+      "design"
+    ],
+    "recommendations": [
+      "Either remove the fallback entirely (require `spot.rungs.{hint_md,reference_md,auto_write_md}` to be present, surfacing 'rung-content-missing' or a new 'spot-rungs-undeclared' kind) or log a warning when the fallback fires. The current behavior is permissive but obscures authoring errors.",
+      "Either (a) make spot.rungs required in the schema (validatePhases enforces it, the fallback is removed, requestHint reads only spot.rungs.hint_md/reference_md/auto_write_md), or (b) drop the spot.rungs field entirely (always derive paths from spot.id). The current 'optional with fallback' state is the worst of both. If keeping the fallback for back-compat, add a code comment explicitly framing it as such and a test that proves the fallback fires when rungs is omitted."
+    ],
+    "descriptions": [
+      "When `spot.rungs?.hint_md|reference_md|auto_write_md` is undefined, the code falls back to `paths/<slug>/rungs/<spot.id>/<rungFile>`. Phases.json declares the `rungs` block for p1-spot-1 but not for p2/p3 stub spots. For cycle 5 this is harmless because gating excludes done state and the only complete spot is p1-spot-1 (which has rungs declared). But the fallback hardcodes the path layout 'paths/<slug>/rungs/<spot.id>/...' which duplicates the manifest's responsibility for declaring file locations and silently masks a 'missing rungs declaration' authoring bug.",
+      "requestHint reads the rung markdown via two competing schemes: (a) `spot.rungs?.hint_md` (relative manifest path), (b) fallback to `paths/<slug>/rungs/<spot.id>/<file>` (canonical). The schema in mcp/server/src/schemas/phases.ts declares `rungs?: SpotRungs` as optional and validates the three fields are strings when present. The fixture phases.json populates both — `rungs.hint_md = 'rungs/p1-spot-1/hint.md'` is byte-identical to what the canonical fallback would produce. So the fallback branch is always dead in production; requestHint is paying for two code paths to express one decision. Worse, if a future curriculum author omits the rungs field in phases.json (which the schema permits), requestHint silently falls back to the canonical path — but the contract was specific about the rungs declaration being required for routing. Dead path or undocumented fallback; pick one."
+    ],
+    "impacts": [
+      "Curriculum authors who forget to declare `rungs` in phases.json get a working tool by accident — masking the omission until a path renames the rungs/ directory, at which point the silent fallback breaks the rung loop without a clear diagnostic.",
+      "Cognitive load on the next maintainer (which path is canonical?), and a silent contract gap: if rungs is omitted from phases.json the rung-content-missing error surface depends on whether the fallback path happens to also exist. Tests don't cover the fallback at all — T-031 renames auto.md (the canonical path), so it exercises the fallback only when spot.rungs?.auto_write_md happens to point at the same file."
+    ],
+    "evidence": "  // Fallback to canonical structure if spot.rungs not declared\n  const rungContentPath = rungRelPath\n    ? path.join(projectRoot, 'paths', slug, rungRelPath)\n    : path.join(projectRoot, 'paths', slug, 'rungs', spot.id, rungFile);",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R1-006",
+      "R2-008"
+    ]
+  },
+  {
+    "cluster_id": "C014",
+    "title": "mkdir failure during snapshot is not wrapped as AutoWriteError, escaping the typed kind enum",
+    "file": "mcp/server/src/ladder.ts",
+    "line_ranges": [
+      "190-205",
+      "184-186",
+      "192-195"
+    ],
+    "agreement_count": 2,
+    "reviewers": [
+      1,
+      6
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "correctness",
+      "security"
+    ],
+    "recommendations": [
+      "Append a monotonic counter or `process.hrtime.bigint()` nanosecond suffix to the rotated path, mirroring state.ts's archiveCounter pattern. One-line fix.",
+      "Wrap the mkdir call in try/catch and throw `new AutoWriteError('snapshot-write-failed', \\`Failed to create snapshots directory: ${e.message}\\`)`. The 'snapshot-write-failed' kind is the closest semantic fit per the contract's enum.",
+      "After computing the rotated path, attempt `fsPromises.access(rotatedPath)` — if it exists, suffix with a counter (`.bak.<ts>.1`, `.bak.<ts>.2`, …). Or use `fs.linkSync` + unlink (atomic create-or-fail rename on POSIX). The existing code is correct under normal use."
+    ],
+    "descriptions": [
+      "Snapshot rotation uses `new Date().toISOString().replace(/:/g, '')` for the rotated suffix. Two rung-3 invocations against the same spot occurring within the same millisecond would compute the same timestamp string. The first rotation succeeds; the second `fsPromises.rename(bakPath, rotatedPath)` would overwrite the prior rotated file (POSIX rename is atomic-overwrite), losing the older snapshot. Compare to state.ts's archiveCorruptFile which adds a monotonic `archiveCounter` suffix exactly to avoid this collision class.",
+      "`fsPromises.mkdir(snapshotsDir, { recursive: true })` is called without a surrounding try/catch. On failure (e.g. EACCES on the projectRoot, ENOSPC, EROFS), the raw NodeJS.ErrnoException propagates out of runAutoWrite. The caller's `catch (err)` checks `err instanceof AutoWriteError` and falls through to the generic branch, surfacing `auto-write-failed: <message>` without a typed `kind` field. The contract documents four AutoWriteErrorKind values; mkdir failures fall outside that set and produce a less-structured error.",
+      "Snapshot rotation uses `new Date().toISOString().replace(/:/g, '')` as the rotation suffix. The format includes milliseconds (e.g. 2026-04-28T120000.123Z), so within-process collisions are unlikely. However, the rotation uses `fsPromises.rename` (not `wx`) for the rotation step. If the rotated path already exists (extremely rapid clock-skewed retries, or a second process operating on the same projectRoot), rename will silently overwrite it on POSIX, destroying the older snapshot. The contract A7 says 'a student who hits rung 3 twice still has every prior version recoverable' — that promise is technically violated under collision."
+    ],
+    "impacts": [
+      "Data loss on rapid retry — only meaningful in test harness or scripted retries (a human student is unlikely to invoke rung-3 twice within 1ms). Practically rare but the snapshot-as-recovery contract claims 'every prior version recoverable' which this violates under the rare collision.",
+      "Diagnostic loss only — the student still gets an error response with kind:'auto-write-failed', just without the four-way subkind discriminator. No state corruption (mkdir runs before any write).",
+      "Edge-case data loss: a malicious or buggy curriculum that triggers rung-3 retries within the same millisecond loses the prior snapshot. Not exploitable by an external attacker; a course author optimizing for retry-spam workflows would need to be aware."
+    ],
+    "evidence": "const ts = new Date().toISOString().replace(/:/g, '');\n    const rotatedPath = `${bakPath}.${ts}`;\n    await fsPromises.rename(bakPath, rotatedPath);",
+    "confidence_spread": [
+      "high",
+      "medium"
+    ],
+    "source_ids": [
+      "R1-002",
+      "R1-003",
+      "R6-005"
+    ]
+  },
+  {
+    "cluster_id": "C015",
+    "title": "runAutoWrite reports snapshot byte count as bytesWritten, not target_file payload bytes",
+    "file": "mcp/server/src/ladder.ts",
+    "line_ranges": [
+      "237-242"
+    ],
+    "agreement_count": 2,
+    "reviewers": [
+      1,
+      4
+    ],
+    "max_severity": "low",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "correctness",
+      "simplicity"
+    ],
+    "recommendations": [
+      "Either rename to `snapshotBytes` (clarifying intent) or compute against `Buffer.byteLength(newContent, 'utf8')` to match the field name. Pick whichever the contract author intended; current code matches the stricter test reading.",
+      "Either (a) rename to `snapshotBytes` for accuracy, or (b) change to `Buffer.byteLength(newContent, 'utf8')` so the field semantically describes the overwrite. Pick one and align the docstring."
+    ],
+    "descriptions": [
+      "The `bytesWritten` field of AutoWriteResult is computed as `Buffer.byteLength(snapshotContent, 'utf8')` — i.e. the size of the original lines that got snapshotted, not the new content written to target_file. The field name 'bytesWritten' more naturally suggests the bytes written to the load-bearing file (target_file). T-051 only asserts `bytesWritten > 0` so the test passes either way, but consumers reading the field may misinterpret it.",
+      "`bytesWritten` is computed as `Buffer.byteLength(snapshotContent, 'utf8')` — the size of the .bak snapshot file, not the bytes written to the target_file. The contract (file list bullet for ladder.ts) says runAutoWrite returns `{ backupPath: string; bytesWritten: number }` and reviewer comment in tests/ladder.test.ts checks `bytesWritten > 0`. Either the field name or the value source is misleading: a caller would reasonably assume `bytesWritten` reports the overwrite size (the side-effect of interest), not the snapshot."
+    ],
+    "impacts": [
+      "No functional impact (the value is not used downstream beyond being returned). Naming/semantic ambiguity only.",
+      "Misleading API surface for a value that nobody actually consumes today (R4-003 also notes the result is dropped). If a future caller uses bytesWritten to log/instrument the overwrite, they'll get the snapshot bytes instead."
+    ],
+    "evidence": "const bytesWritten = Buffer.byteLength(snapshotContent, 'utf8');\n\n  return {\n    backupPath: bakPath,\n    bytesWritten,\n  };",
+    "confidence_spread": [
+      "high",
+      "medium"
+    ],
+    "source_ids": [
+      "R1-004",
+      "R4-005"
+    ]
+  },
+  {
+    "cluster_id": "C006",
+    "title": "rung-3 casts spot to SpotData without stub-spot defensive check that nextSpot has",
+    "file": "mcp/server/src/tools/requestHint.ts",
+    "line_ranges": [
+      "240"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      2
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "design"
+    ],
+    "recommendations": [
+      "Mirror nextSpot.ts's stub-spot guard at requestHint.ts after the getCurrentSpot call: if rung is 3 and spot.target_file/target_range/verification are undefined, return `{ ok: false, error: { kind: 'no-active-spot' or a new 'stub-spot-cannot-auto-write', message: '...' } }`. For rungs 1 and 2 which only need the rung markdown, no defense is required."
+    ],
+    "descriptions": [
+      "nextSpot.ts:91-98 explicitly defends against stub spots by checking `target_file === undefined || target_range === undefined || prompt === undefined || verification === undefined` and returning a structured error before consuming the spot. requestHint's rung-3 path lacks this defense: line 240 casts `spot as SpotData` and runAutoWrite immediately uses `spot.target_file!` (non-null assertion at ladder.ts:133). If the manifest defines a stub spot (legitimate per the schema, where target_file/target_range can be absent for navigation-only spots), rung-3 invocation against that spot produces a TypeError 'Cannot read properties of undefined' at the path.join line — not a structured error. Tests pass because the only fixture spot (p1-spot-1) has the full shape."
+    ],
+    "impacts": [
+      "First curriculum that ships a stub spot crashes the rung-3 call with a TypeError that propagates to the MCP boundary as a 'tool error'. Future-proofing gap. Also: the cast `spot as SpotData` is semantically a lie — SpotStub | SpotData is a real union in the schema, and the cast tells TS to ignore the discrimination requirement."
+    ],
+    "evidence": "    autoWriteResult = await runAutoWrite(projectRoot, spot as SpotData, payload);",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R2-009"
+    ]
+  },
+  {
+    "cluster_id": "C009",
+    "title": "Dead local variable: savedState assigned but never read",
+    "file": "mcp/server/src/tools/requestHint.ts",
+    "line_ranges": [
+      "266-266",
+      "238-259"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      4
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "simplicity"
+    ],
+    "recommendations": [
+      "Delete line 266. The block reads cleanly without it.",
+      "Either (a) drop the binding: `await runAutoWrite(projectRoot, spot as SpotData, payload);` and remove the agent-spec line that references it, or (b) include `backupPath` in the rung-3 RequestHintResult so it can be narrated by the conductor."
+    ],
+    "descriptions": [
+      "In the rung-3 path, `let savedState = newState;` is declared and assigned but never read or reassigned anywhere in the function. The subsequent `saveState(projectRoot, newState)` call uses `newState` directly. The `savedState` variable is pure dead code.",
+      "The rung-3 path declares `let autoWriteResult: { backupPath: string; bytesWritten: number }` and assigns the return value of `runAutoWrite`, but the `autoWriteResult` variable is never read afterward. The agent docstring (course-conductor.md line 52-53) says the conductor should narrate the snapshot path, but the response object discards `backupPath` entirely — it is not surfaced anywhere."
+    ],
+    "impacts": [
+      "Reader confusion — the name implies post-save bookkeeping that does not exist, suggesting half-finished editing. Trivially removable. tsc --strict does not catch this because it's an initialized binding.",
+      "Reader thinks the data is used. The narration affordance promised by the agent spec is broken because the API never returns the path. Either the variable should be deleted (await the call without binding) and the agent spec adjusted, or `backupPath` should be added to the rung-3 success response so the conductor can actually narrate it."
+    ],
+    "evidence": "let autoWriteResult: { backupPath: string; bytesWritten: number };\n  try {\n    autoWriteResult = await runAutoWrite(projectRoot, spot as SpotData, payload);",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R4-001",
+      "R4-003"
+    ]
+  },
+  {
+    "cluster_id": "C010",
+    "title": "Unused import: advanceCursor in requestHint.ts",
+    "file": "mcp/server/src/tools/requestHint.ts",
+    "line_ranges": [
+      "4-4"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      4
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "simplicity"
+    ],
+    "recommendations": [
+      "Remove `advanceCursor` from the destructured import on line 4."
+    ],
+    "descriptions": [
+      "`advanceCursor` is imported from `../phaseEngine.js` but never referenced in the file. Cursor advancement on rung-3 pass is handled by the dispatched `runVerifySpot` call, not by requestHint itself, so this import is leftover."
+    ],
+    "impacts": [
+      "Misleads readers into thinking requestHint mutates the cursor directly (it doesn't — verifySpot does). Trivial cleanup. Strict TS would flag with `noUnusedLocals`/`noUnusedParameters` if enabled but those aren't on here."
+    ],
+    "evidence": "import { loadPhases, getCurrentSpot, advanceCursor } from '../phaseEngine.js';",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R4-002"
+    ]
+  },
+  {
+    "cluster_id": "C013",
+    "title": "outputStyleOk gate at requestHint runs probeOutputStyle but ignores its warnings",
+    "file": "mcp/server/src/tools/requestHint.ts",
+    "line_ranges": [
+      "81-90"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      6
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "security"
+    ],
+    "recommendations": [
+      "Surface the underlying warning kind in the error message (e.g. include `styleCheck.warning?.kind` in the structured error). Optional — the gate's primary purpose (zero writes) is correctly enforced."
+    ],
+    "descriptions": [
+      "The L002 carry-forward gate is correctly placed BEFORE loadState, satisfying the AC-1.3 zero-write-on-disabled invariant. However, probeOutputStyle returns more than just `ok` — it can return warnings (settings-file-missing, settings-parse-error, learning-output-style-disabled). The handler discards them and emits a generic message. Same pattern in selectPath/setPersonalization/nextSpot/verifySpot. Not exploitable; the gate is correctly load-bearing for AC-1.3. But discarding the underlying warning kind hides why the gate failed and could mask a settings-file-missing scenario where the student's environment is misconfigured rather than the output style being actively disabled."
+    ],
+    "impacts": [
+      "Operational diagnostics-only: a student whose settings.json is malformed gets the same error as one who has the output style disabled. No security impact (the gate fails closed in both cases — zero writes on either failure mode)."
+    ],
+    "evidence": "const styleCheck = await probeOutputStyle();\n  if (!styleCheck.ok) {\n    return {\n      ok: false,\n      error: {\n        kind: 'output-style-disabled',\n        message: 'output-style-disabled: learning-output-style plugin is not enabled',",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R6-004"
+    ]
+  },
+  {
+    "cluster_id": "C016",
+    "title": "snapshot rotation timestamp doesn't reuse state.ts's collision-counter pattern",
+    "file": "mcp/server/src/ladder.ts",
+    "line_ranges": [
+      "189-205"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      2
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "design"
+    ],
+    "recommendations": [
+      "Extract `rotateWithTimestamp(filePath)` into state.ts (or a new `mcp/server/src/fsRotate.ts`) using the same `<ts>-<counter>` pattern as archiveCorruptFile. Both call sites (cycle-2 corrupt state, cycle-5 rung-3 .bak) use the helper. Bonus: the rotation can use rename instead of read+write (atomic) which ladder.ts is already doing, but the helper keeps the timestamp+counter logic in one place."
+    ],
+    "descriptions": [
+      "state.ts solved exactly this problem in cycle 2 (`state.corrupt-<ts>-<counter>.json` with a monotonic archiveCounter for same-millisecond collisions). ladder.ts's `.bak` rotation reaches for `new Date().toISOString().replace(/:/g, '')` and stops there — no counter, no random suffix. Two rapid rung-3 retries inside the same millisecond (plausible in tests; the contract's T-052 test pre-creates a .bak and then immediately calls runAutoWrite, depending on Date.now() advancing) collide on the rotated path; state.ts's wx flag would then make the second rename throw EEXIST, which the catch-block at line 196-204 reports as 'snapshot-write-failed' even though the failure is a rotation race, not a write failure. Existing test passes only because the pre-existing fixture is created on a separate event-loop tick from the rotation."
+    ],
+    "impacts": [
+      "Low-frequency collision potential, but more importantly: the cycle-2 archive-rotation idiom is the right pattern and ladder.ts re-implemented a half-version of it instead of factoring out `archiveWithTimestamp(path)` into state.ts (or a shared util). The contract Behavior section explicitly described .bak rotation 'so prior rung-3 attempts stay recoverable' — the recoverability promise gets shakier when a same-ms collision raises 'snapshot-write-failed' and aborts the user's rung-3 invocation entirely."
+    ],
+    "evidence": "    const ts = new Date().toISOString().replace(/:/g, '');\n    const rotatedPath = `${bakPath}.${ts}`;\n    await fsPromises.rename(bakPath, rotatedPath);",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R2-006"
+    ]
+  },
+  {
+    "cluster_id": "C017",
+    "title": "runAutoWrite race window between fsPromises.access and fsPromises.rename swallows ENOENT data loss",
+    "file": "mcp/server/src/ladder.ts",
+    "line_ranges": [
+      "189-205"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      3
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "error-handling"
+    ],
+    "recommendations": [
+      "Use a single-step `fsPromises.rename(bakPath, rotatedPath).catch(err => { if (err.code === 'ENOENT') return; throw new AutoWriteError('snapshot-write-failed', …); })` and drop the access() probe. The TOCTOU is closed and the catch is one-step."
+    ],
+    "descriptions": [
+      "Rotation uses access() to test whether `.bak` exists, then rename() to move it. If a concurrent process (or the user) deletes `.bak` between the two calls, rename rejects with ENOENT — which the catch block silently treats as 'no rotation needed' (`if (e.code !== 'ENOENT') throw …`). The same ENOENT classification covers two distinct cases: (1) `.bak` never existed (legitimate first-call path), (2) `.bak` was deleted between access and rename (a race that arguably should still try to write the new snapshot, which it does — but should surface a warning)."
+    ],
+    "impacts": [
+      "Mostly cosmetic — the user gets a fresh snapshot either way. The concern is that the silent ENOENT swallow on rename masks fs-level corruption signals. Probability is low because no other process should touch `.sui-deepbook-course/snapshots/` during a rung-3 invocation."
+    ],
+    "evidence": "  try {\n    await fsPromises.access(bakPath);\n    // File exists — rotate it\n    const ts = new Date().toISOString().replace(/:/g, '');\n    const rotatedPath = `${bakPath}.${ts}`;\n    await fsPromises.rename(bakPath, rotatedPath);\n  } catch (err) {",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R3-005"
+    ]
+  },
+  {
+    "cluster_id": "C018",
+    "title": "runAutoWrite ENOENT vs other read errors collapsed into target-file-missing",
+    "file": "mcp/server/src/ladder.ts",
+    "line_ranges": [
+      "137-145"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      3
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "error-handling"
+    ],
+    "recommendations": [
+      "Introduce a 'target-file-unreadable' kind distinct from 'target-file-missing' (or rename the kind to 'target-file-unreadable'), and only use 'target-file-missing' when err.code === 'ENOENT'. AutoWriteErrorKind already carries the discriminator."
+    ],
+    "descriptions": [
+      "The target_file read catch maps every error to AutoWriteError 'target-file-missing', explicitly handling ENOENT but then falling through to the same kind for other ENXIO/EACCES/EISDIR codes. The message changes ('Target file not found' vs 'Failed to read target file') but the discriminator is identical. EACCES and EISDIR are categorically different from a missing file and should not classify as 'missing'."
+    ],
+    "impacts": [
+      "Misleading error classification. A student who has a permission misconfiguration on src/App.tsx gets an 'auto-write-failed (target-file-missing)' message that suggests they should create the file, when in fact they need to chmod it."
+    ],
+    "evidence": "    if (e.code === 'ENOENT') {\n      throw new AutoWriteError('target-file-missing', `Target file not found: ${targetFilePath}`);\n    }\n    throw new AutoWriteError('target-file-missing', `Failed to read target file: ${e.message}`);",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R3-008"
+    ]
+  },
+  {
+    "cluster_id": "C019",
+    "title": "Redundant let-declarations for startLine/endLine in runAutoWrite",
+    "file": "mcp/server/src/ladder.ts",
+    "line_ranges": [
+      "150-161"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      4
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "simplicity"
+    ],
+    "recommendations": [
+      "Replace `let startLine: number; let endLine: number;` ... `startLine = parseInt(...); endLine = parseInt(...);` with `const startLine = parseInt(rangeMatch[1], 10); const endLine = parseInt(rangeMatch[2], 10);` after the throw block."
+    ],
+    "descriptions": [
+      "`let startLine: number; let endLine: number;` are declared above the `if (!rangeMatch) throw` then assigned on lines 160-161 after the throw. Because the throw exits the function, the `let` separation buys nothing — both could be `const` immediately after the throw block. The split obscures that these values are immutable post-parse."
+    ],
+    "impacts": [
+      "Mild verbosity / Move-2024-style nit (prefer const). Five lines collapse to two cleaner const-declarations. Not a behavior issue."
+    ],
+    "evidence": "let startLine: number;\n  let endLine: number;\n\n  if (!rangeMatch) {\n    throw new AutoWriteError(",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R4-004"
+    ]
+  },
+  {
+    "cluster_id": "C020",
+    "title": "Snapshot rotation collides on millisecond-fast successive rung-3 calls — A7 append-only claim is not enforced under racy timing",
+    "file": "mcp/server/src/ladder.ts",
+    "line_ranges": [
+      "189-216"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      5
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "Either (a) add a third rung-3 invocation in T-018/T-052 with a vi.useFakeTimers() that holds the system clock at a fixed instant, asserting both rotated archives co-exist (would require the impl to add a collision-resolving suffix); or (b) explicitly note in the contract that rotation is best-effort and update A7 wording. Option (a) makes the invariant tight; option (b) downgrades A7 to a documentation note."
+    ],
+    "descriptions": [
+      "runAutoWrite rotates an existing .bak to `.bak.<ISO-timestamp-no-colons>` using `new Date().toISOString().replace(/:/g, '')`. The timestamp has millisecond precision. A third (or any subsequent) rung-3 invocation that fires within the same millisecond as a previous rotation would compute the same rotated path, and `fsPromises.rename(bakPath, rotatedPath)` would silently overwrite the prior rotated archive on POSIX (rename onto an existing file is destructive). The contract A7 claims 'snapshot files are append-only across rung-3 attempts', but T-018 (requestHint) and T-052 (ladder) only exercise TWO rung-3 calls — the byte-fidelity assertions check only the first rotation, never the second. The implementation does NOT add a counter or recheck collision before rename, so no test catches sub-ms back-to-back rotations."
+    ],
+    "impacts": [
+      "Real-world impact is negligible (a student will not press rung-3 twice within 1ms), but the test-vs-impl pairing for A7 is technically loose: the contract's append-only claim is asserted by tests that only cover one rotation step, leaving a gap that the impl quietly papers over with rename's overwrite semantics."
+    ],
+    "evidence": "const ts = new Date().toISOString().replace(/:/g, '');\n    const rotatedPath = `${bakPath}.${ts}`;\n    await fsPromises.rename(bakPath, rotatedPath);",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R5-002"
+    ]
+  },
+  {
+    "cluster_id": "C025",
+    "title": "Cycle5Warning union types are defined but never imported anywhere",
+    "file": "mcp/server/src/warnings.ts",
+    "line_ranges": [
+      "101-122"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      4
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "simplicity"
+    ],
+    "recommendations": [
+      "Either (a) make tools' error-construction sites consume these interfaces (typed at the boundary, not literal), or (b) replace the three interfaces with three exported string constants that the test greps still match, eliminating the unused type declarations."
+    ],
+    "descriptions": [
+      "`StateSaveFailedWarning`, `AutoWriteFailedWarning`, `OutputStyleDisabledWarning`, and the `Cycle5Warning` union are added to satisfy the static greps in T-085/T-086/T-087 (which only check that the strings 'state-save-failed', 'auto-write-failed', 'output-style-disabled' appear in warnings.ts). No code imports `Cycle5Warning` or any of the three new interfaces — the actual error responses in requestHint.ts/selectPath.ts/etc. construct ad-hoc literal objects (e.g. `{ kind: 'state-save-failed', message: ... }`) without referencing the declared types. The `AutoWriteFailedWarning` even uses `kind_detail` while requestHint flattens to `auto-write-failed (${err.kind}): ${err.message}` — the schema is decorative, not load-bearing."
+    ],
+    "impacts": [
+      "Type drift: the declared warning shapes can diverge from what tools actually emit because nothing checks. The interfaces exist purely to pass grep-based tests, which is the kind of dead schema the consolidator should consider removing or wiring through."
+    ],
+    "evidence": "export interface AutoWriteFailedWarning {\n  kind: 'auto-write-failed';\n  spotId: string;\n  kind_detail: 'target-file-missing' | ...;\n  message: string;\n}",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R4-007"
+    ]
+  },
+  {
+    "cluster_id": "C026",
+    "title": "course-conductor.md narrates 'autoVerifyResult.advanced' as the success signal — contradicts contract",
+    "file": "agents/course-conductor.md",
+    "line_ranges": [
+      "52-55"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      2
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "design"
+    ],
+    "recommendations": [
+      "Change the bullet to 'If the auto-verify passed (autoVerifyResult.pass: true), announce success. If autoVerifyResult.advanced is also true, the cursor advanced; if pass=true but advanced=false, the verification passed but state failed to persist — surface autoVerifyResult.output and the structured error to the student and ask them to resolve the persistence issue.' Treat pass and advanced as orthogonal in the prose, mirroring how the contract treats them."
+    ],
+    "descriptions": [
+      "The contract Behavior section: 'On verification pass, the cursor advances exactly as in cycle 4's pass branch' and 'autoVerifyResult: { pass: true, advanced: true }' on the happy path; 'pass: false, advanced: false' on the failed path. Pass is the source of truth — `advanced` is a derived field that reflects whether the cursor was successfully moved (which can fail independently from verification: M002 carry-forward, where pass=true but saveState rejects, gives advanced=false). The conductor agent's narration says 'If the auto-verify passed (autoVerifyResult.advanced: true), announce success and proceed.' — wrong field. A genuine pass-but-state-save-failed lands the student in a state where the auto-verify passed (so the student's code is correct) but advanced is false (so the conductor announces failure and prompts another edit). Confusing UX."
+    ],
+    "impacts": [
+      "User-visible: a student who hits the rare M002-carry-forward race (saveState rejection on the rung-3 commit) gets told 'review and edit further' when their code is actually correct. Low frequency in practice (EACCES on .sui-deepbook-course is rare on a dev box) but the agent narration is the wrong contract on the page."
+    ],
+    "evidence": "  - If the auto-verify passed (`autoVerifyResult.advanced: true`), announce success and proceed.\n  - If the auto-verify failed (`autoVerifyResult.advanced: false`), encourage the student to review and edit further, then call `verifySpot` again.",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R2-007"
+    ]
+  },
+  {
+    "cluster_id": "C027",
+    "title": "harness verifyStub closure variable type widens silently after withVerifyStub call",
+    "file": "scripts/e2e/harness.ts",
+    "line_ranges": [
+      "111-157"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      2
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "design"
+    ],
+    "recommendations": [
+      "Extract `interceptVerifyStub(toolName, args, runner)` returning the MCP envelope, parameterized by the tool's own runner function. Both intercept blocks become 4-line calls. Optionally, replace the single `verifyStub` field with a per-tool map (`verifyStubs: Map<'verifySpot' | 'requestHint', StubResult>`) so independent stubbing is possible — that would unblock the M002 race test and tighten the rung-3 'auto-verify failed but second verifySpot passes' E-004 scenario."
+    ],
+    "descriptions": [
+      "verifyStub is declared `let verifyStub: { pass: boolean; output?: string } | null = null;`, then both verifySpot and requestHint intercepts copy it to a const local (`const stub = verifyStub;`) inside their `if (toolName === 'verifySpot' && verifyStub !== null)` blocks. The two intercept blocks are byte-identical aside from the tool name and the inner runRequestHint vs runVerifySpot call — same closure variable, same narrowing pattern, same VerifySpawnFn shim, same MCP-envelope wrapping. The second intercept (requestHint) was clearly copy-pasted from the first (verifySpot). Both also share the bug where if the test sets `withVerifyStub({ pass: false })` and only the rung-3 dispatch fires, the callTool intercept rewrites the verify-bound stub for both tools, so the test cannot independently stub verifySpot's first call vs rung-3's nested verifySpot call (both see pass:false). The harness logic technically composes, but it doesn't compose cleanly — it duplicates."
+    ],
+    "impacts": [
+      "30 lines of pure duplication in a file that is the test infrastructure for the entire engine surface. Every future tool that wants verify-stub interception will paste a third copy. The shared-stub semantics is also under-documented: tests that need 'verifySpot fails, but rung-3's nested verifySpot passes' to exercise the M002 race can't be expressed with the current harness API."
+    ],
+    "evidence": "      if (toolName === 'verifySpot' && verifyStub !== null) {\n        const stub = verifyStub;\n        const stubSpawn: VerifySpawnFn = () => ({\n          status: stub.pass ? 0 : 1,\n…\n      if (toolName === 'requestHint' && verifyStub !== null) {\n        const stub = verifyStub;\n        const stubSpawn: VerifySpawnFn = () => ({\n          status: stub.pass ? 0 : 1,",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R2-010"
+    ]
+  },
+  {
+    "cluster_id": "C030",
+    "title": "AbortSignal.timeout(5000) on checkManifest does not narrow the AbortError vs other rejection — silent classification",
+    "file": "mcp/server/src/probes/manifest.ts",
+    "line_ranges": [
+      "15-24"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      3
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "error-handling"
+    ],
+    "recommendations": [
+      "Optionally log to stderr via console.warn() when err.name === 'TimeoutError' (the AbortSignal.timeout rejection class) so operators can distinguish hung-server from down-server. Probe contract stays unchanged."
+    ],
+    "descriptions": [
+      "checkManifest catches all fetch rejections (including the AbortError fired by AbortSignal.timeout) and returns false. The probe surface is correct (timeout → false → probe fails with a remediable shell action), but the error is fully discarded — the function doesn't even log which class of failure occurred (timeout vs DNS vs ECONNREFUSED). Operators investigating a flaky preflight cannot distinguish 'manifest server is down' from 'manifest server is hung past 5s' from inside the probe."
+    ],
+    "impacts": [
+      "Diagnostic gap, not a correctness bug. Cycle 3 R3-005 was about adding the timeout (which is done correctly); the silent collapse is the long-tail concern."
+    ],
+    "evidence": "  try {\n    const response = await fetch(MANIFEST_URL, { signal: AbortSignal.timeout(5000) });\n    return response.ok && response.status === 200;\n  } catch (_err) {\n    return false;\n  }",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R3-009"
+    ]
+  },
+  {
+    "cluster_id": "C031",
+    "title": "parseCommand silently strips unbalanced double quotes — tokenizes garbage instead of rejecting",
+    "file": "mcp/server/src/verify.ts",
+    "line_ranges": [
+      "61-72"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      3
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "error-handling"
+    ],
+    "recommendations": [
+      "Add a balance-tracking flag inside the quote-reading loop and throw `parseCommand: unbalanced double quote in '<input>'` when EOL is hit before the closing quote. Mirrors the empty-string rejection at line 84."
+    ],
+    "descriptions": [
+      "When a double-quoted segment is opened but never closed (e.g. `pnpm \"build` with no closing quote), the inner loop runs to end-of-string and the `if (i < s.length) i++` step is silently skipped. The result is that everything from the opening quote to EOL becomes a single arg. There is no rejection of malformed quoting. A curriculum author writing `pnpm \"build dir` (typo) gets a silently-mangled spawn argv rather than a parse error."
+    ],
+    "impacts": [
+      "Silent garbage-in / garbage-out. The cycle-4 L001 carry-forward is about respecting quotes; an unbalanced quote should be a parse error, not a tokenization heuristic. Probability of a real curriculum author hitting this is low (build_command is usually 'pnpm build') but the failure mode is exactly the kind of thing that would make a manifest-author's day hard to debug because the spawn just fails with 'command not found' or similar."
+    ],
+    "evidence": "    if (s[i] === '\"') {\n      // Double-quoted segment\n      i++; // skip opening quote\n      let token = '';\n      while (i < s.length && s[i] !== '\"') {\n        token += s[i];\n        i++;\n      }\n      if (i < s.length) {\n        i++; // skip closing quote\n      }\n      tokens.push(token);",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R3-010"
+    ]
+  },
+  {
+    "cluster_id": "C032",
+    "title": "T-091 amendment widens shell-literal scope to basename match — tools/ is not enforced",
+    "file": "tests/requestHint.test.ts",
+    "line_ranges": [
+      "1104-1127"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      5
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "Optionally tighten the ALLOWED set to absolute relative paths instead of basenames; or simply note the tightening as a cycle-6 follow-up since T-148 already covers the load-bearing per-tool claim."
+    ],
+    "descriptions": [
+      "The orchestrator amendment to T-091 swapped 'kind:shell literal confined to runPreflightProbe.ts' for an ALLOWED set {runPreflightProbe.ts, preflight.ts, manifest.ts} matched against `path.basename(f)`. Because the comparison is on basename only, a hypothetical future regression that adds a NEW tool file named (e.g.) `tools/manifest.ts` containing kind:'shell' would slip past T-091 entirely. The synthesis-notes correctly observes that the load-bearing intent is 'no NEW tool emits shell actions' and that T-148 in runPreflightProbe.test.ts still enforces the per-tool-file claim within mcp/server/src/tools/ (only runPreflightProbe.ts is allowed). So the invariant is still covered in aggregate, but T-091 standalone is now permissive about file location."
+    ],
+    "impacts": [
+      "Non-load-bearing in practice (T-148 catches the load-bearing tools/ regression). Future cycles should re-tighten T-091 by checking path.relative against an absolute file allowlist — e.g. ALLOWED = new Set(['mcp/server/src/preflight.ts', 'mcp/server/src/probes/manifest.ts', 'mcp/server/src/tools/runPreflightProbe.ts']) — so renaming or relocating an emitter is caught."
+    ],
+    "evidence": "const ALLOWED = new Set([\n      'runPreflightProbe.ts',\n      'preflight.ts',\n      'manifest.ts',\n    ]);\n    const offenders: string[] = [];\n    for (const f of files) {\n      const c = fs.readFileSync(f, 'utf8');\n      if (/kind\\s*:\\s*['\"]shell['\"]/.test(c)) offenders.push(f);\n    }\n    for (const f of offenders) {\n      expect(ALLOWED.has(path.basename(f)), `unexpected shell-literal in ${f}`).toBe(true);\n    }",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R5-001"
+    ]
+  },
+  {
+    "cluster_id": "C033",
+    "title": "A6 source-grep tests cover only requestHint.ts and ladder.ts — contract scope says all engine code",
+    "file": "tests/requestHint.test.ts",
+    "line_ranges": [
+      "996-1002"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      5
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "Add a single source-grep test that walks all .ts under `mcp/server/src/` (excluding `schemas/state.ts`'s default-on-load branch and tests/) and asserts zero `auto_completed = false` literals. This widens the AC-5.4 coverage to match the contract scope."
+    ],
+    "descriptions": [
+      "Contract A6 specifies the literal `auto_completed = false` 'matches in zero lines' across `mcp/server/src/**/*.ts` (excluding the schema's default-on-load branch and tests). T-039 (requestHint.test.ts:997) and T-040 (ladder.test.ts:674) only inspect those two cycle-5 files. A regression in any other engine file (e.g. nextSpot.ts, verifySpot.ts, phaseEngine.ts) that introduces an `auto_completed = false` re-write would not be caught. Today no such occurrences exist (verified with `grep -rn 'auto_completed\\s*=\\s*false' mcp/server/src/`), so the gap is theoretical, but the tests do not enforce A6's stated scope."
+    ],
+    "impacts": [
+      "Currently unobservable — no engine code outside the two cycle-5 files writes `auto_completed = false`. But future cycles that touch the cursor-advance or state-merge logic could regress AC-5.4 (auto_completed permanence) and the existing source-grep tests would not flag it."
+    ],
+    "evidence": "it('T-039: requestHint.ts contains zero \"auto_completed = false\" assignments', () => {\n    const sourcePath = path.join(REPO_ROOT, 'mcp', 'server', 'src', 'tools', 'requestHint.ts');\n    const content = fs.readFileSync(sourcePath, 'utf8');\n    expect(/auto_completed\\s*=\\s*false/.test(content)).toBe(false);\n  });",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R5-003"
+    ]
+  },
+  {
+    "cluster_id": "C011",
+    "title": "rungFilename + rungRelPath dual-path lookup adds branching for an always-defined manifest field",
+    "file": "mcp/server/src/tools/requestHint.ts",
+    "line_ranges": [
+      "64-68, 174-189"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      4
+    ],
+    "max_severity": "info",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "simplicity"
+    ],
+    "recommendations": [
+      "If `rungs` is always present in well-formed phases.json, treat its absence as an authoring error and surface it as `phases-load-failed` (or a new schema validation kind) rather than silently falling back to a convention. Otherwise, leave a comment explaining when the fallback fires."
+    ],
+    "descriptions": [
+      "The handler computes a `rungFile` (via the helper `rungFilename`) AND consults `spot.rungs?.{hint_md|reference_md|auto_write_md}`, then falls back to a canonical path `paths/<slug>/rungs/<spot.id>/<rungFile>` if `spot.rungs` is undefined. In practice the production phases.json (paths/01-orderbook-viewer/phases.json) always declares `rungs`, and the schema validates it when present. The fallback path is never exercised by the test fixtures or production. Two helpers + an if/else cascade + a ternary on the path-build implement what could be a single lookup against `spot.rungs`."
+    ],
+    "impacts": [
+      "Defensive double-path adds reading overhead and creates a code path nobody tests against. If `spot.rungs` is intended to be optional indefinitely, the fallback is fine; if it's required by schema in practice, this is dead branching."
+    ],
+    "evidence": "const rungContentPath = rungRelPath\n    ? path.join(projectRoot, 'paths', slug, rungRelPath)\n    : path.join(projectRoot, 'paths', slug, 'rungs', spot.id, rungFile);",
+    "confidence_spread": [
+      "low"
+    ],
+    "source_ids": [
+      "R4-006"
+    ]
+  },
+  {
+    "cluster_id": "C028",
+    "title": "harness.lesson E-004 traversal bypasses MCP transport for requestHint when verifyStub is set",
+    "file": "scripts/e2e/harness.ts",
+    "line_ranges": [
+      "130-157"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      5
+    ],
+    "max_severity": "info",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "No change needed. If a future cycle wants stricter MCP coverage, add an E-004 variant that drives only rung-1 and rung-2 (which have no verifySpot dispatch) without the verifyStub, so the full MCP round-trip is exercised on the happy path."
+    ],
+    "descriptions": [
+      "When the harness has `verifyStub` installed (via `withVerifyStub`), `callTool('requestHint', ...)` short-circuits to call `runRequestHint` directly with the stub spawn. The MCP client/server round-trip is skipped. T-096/T-097/T-098 (the E-004 traversal cases) all install withVerifyStub before calling requestHint, so those tests do NOT exercise the MCP wire shape for requestHint. This is reasonable engineering (otherwise the rung-3 dispatch would shell out to pnpm), and T-107 covers the gap by calling `harness.callTool('requestHint', ...)` WITHOUT a verifyStub, asserting the SDK does not reply 'tool not found'. So in aggregate the MCP registration is end-to-end-tested. Worth noting because the question 'does E-004 drive through the MCP transport?' has the nuanced answer 'no for the verify-pass path; yes via T-107 smoke marker'."
+    ],
+    "impacts": [
+      "None operationally — T-107 closes the gap. Documenting this is useful for future reviewers who want to verify that requestHint's wire boundary is exercised."
+    ],
+    "evidence": "if (toolName === 'requestHint' && verifyStub !== null) {\n        const stub = verifyStub;\n        const stubSpawn: VerifySpawnFn = () => ({ ... });\n        const result = await runRequestHint(\n          { projectRoot: projectRootArg, rung: rungArg },\n          { spawn: stubSpawn },\n        );",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R5-004"
+    ]
+  },
+  {
+    "cluster_id": "C029",
+    "title": "Harness withDeployStub mutates global process.env without isolation",
+    "file": "scripts/e2e/harness.ts",
+    "line_ranges": [
+      "211-227"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      6
+    ],
+    "max_severity": "info",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "security"
+    ],
+    "recommendations": [
+      "If concurrent harness boots become a concern, switch the deploy stub from process.env to per-instance state (mirroring verifyStub). Optional."
+    ],
+    "descriptions": [
+      "withDeployStub mutates process.env.E2E_DEPLOY_STUB and returns a cleanup function. If two harness instances run concurrently (vitest parallel test files), the second instance's setup races with the first's cleanup. This is test-infra-only and does not affect production security; flagging because the cycle 5 contract added a parallel pattern (verifyStub) that is per-instance and properly isolated, and the contrast is worth noting for future harness work."
+    ],
+    "impacts": [
+      "Test-only flakiness in the rare case of concurrent harness usage. No production exposure."
+    ],
+    "evidence": "process.env.E2E_DEPLOY_STUB = '1';",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R6-006"
+    ]
+  },
+  {
+    "cluster_id": "C034",
+    "title": "T-094 back-compat test does not exercise auto_write_attempted=true preservation on load",
+    "file": "tests/requestHint.test.ts",
+    "line_ranges": [
+      "1151-1172"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      5
+    ],
+    "max_severity": "info",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "Add a one-line companion case to T-094 with `auto_write_attempted: true` in the legacy shape and assert `result.value.ladder['p1-spot-1'].auto_write_attempted === true` after load."
+    ],
+    "descriptions": [
+      "T-094 verifies that a legacy state.json without `auto_write_attempted` loads to kind:'ok' with the field defaulted to false. It does NOT assert that an EXISTING `auto_write_attempted: true` value is preserved through load — which is the case that exercises append-only durability (a student who completed rung-3 in cycle 4 expects that flag to survive). The schema implementation (`mcp/server/src/schemas/state.ts:94`) handles both cases via `typeof r['auto_write_attempted'] === 'boolean' ? r['auto_write_attempted'] : false`, so today the impl is correct. But the test only covers the absent-field path."
+    ],
+    "impacts": [
+      "If a future schema-normalization refactor accidentally clobbered an existing true value to false (e.g., by always defaulting), no test would catch it. AC-5.4 (auto_completed permanent) is durability-tested via T-097 (session restart), but the schema-load-level back-compat test for auto_write_attempted is one-sided."
+    ],
+    "evidence": "const legacyShape = {\n      ...\n      ladder: {\n        'p1-spot-1': {\n          hint_used: true,\n          reference_shown: false,\n          auto_completed: false,\n        },\n      },\n      ...\n    };\n    const result = mod.validateState(legacyShape);\n    expect(result.ok).toBe(true);\n    if (result.ok) {\n      expect(result.value.ladder['p1-spot-1'].auto_write_attempted).toBe(false);\n    }",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R5-005"
+    ]
+  }
+]

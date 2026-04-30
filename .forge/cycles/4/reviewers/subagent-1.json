@@ -1,0 +1,80 @@
+[
+  {
+    "id": "R1-001",
+    "title": "verify.ts re-introduces module-level test seam removed by A13",
+    "severity": "medium",
+    "category": "correctness",
+    "file": "mcp/server/src/verify.ts",
+    "line_range": "36-67",
+    "description": "Cycle 4's A13 explicitly removed the global mutable `setSpawnOverride` Map from preflight.ts in favor of per-call ProbeOptions.spawn injection. verify.ts then introduces an exactly-isomorphic seam (`_verifyOverride` module-level let + `setVerifyOverride` exporter consulted before `opts.spawn` is even checked). The harness's `withVerifyStub` uses this seam because it cannot reach the runVerification call site through the MCP tool boundary. The runVerification call in tools/verifySpot.ts:58 also passes no opts, so the per-call spawn seam is unreachable in production from the tool. The contract intent was 'no module-level test seam in production code'; cycle 4 violates that spirit at the same moment it removed the old one.",
+    "impact": "Same class of test-state contamination the M005 carry-forward was meant to eliminate: an installed override outlives the test that installed it if cleanup is missed (afterEach failure, missed `await harness.shutdown()`, parallel-file leakage). The next caller of runVerification — including production code — silently uses the stub. The correctness invariant 'no global mutable test seam in production' is now reasserted only for the preflight surface, not the verification surface.",
+    "recommendation": "Drop `_verifyOverride` and `setVerifyOverride`. Make verifySpot.ts thread `VerifyOptions` through (e.g. read a harness-installed-only spawn map keyed on projectRoot and pass `{ spawn }` to runVerification), or have `withVerifyStub` install the stub via a per-instance hook on the harness rather than module state. Cycle 5 should treat the verify seam the same way M005 treated the probe seam.",
+    "evidence": "let _verifyOverride: VerifyOverrideFn | undefined;\n\nexport function setVerifyOverride(fn: VerifyOverrideFn): () => void {\n  _verifyOverride = fn;",
+    "confidence": "high"
+  },
+  {
+    "id": "R1-002",
+    "title": "RegistryWarning union exposes three kinds registry.ts never emits",
+    "severity": "low",
+    "category": "correctness",
+    "file": "mcp/server/src/warnings.ts",
+    "line_range": "7-18",
+    "description": "Contract A12 specifies `RegistryWarning` is a discriminated union of exactly the eight kinds registry.ts emits. The implementation declares 11 members: the 8 required kinds plus `paths-missing`, `paths-empty`, and `path-malformed` (semantic aliases of three of the eight). registry.ts emits none of these alias kinds — grep across the codebase confirms zero producers. T-254 only verifies the 8 required kinds are present, not that the union is closed at exactly 8.",
+    "impact": "Consumers of the discriminated union can match `kind === 'paths-missing'` and TypeScript will accept the narrowing — but the branch is dead code at runtime because nothing emits it. This is the inverse of the cycle-3 R1-003 / R2-001 carry-forward (loose `kind: string`): the type is now lying about what wire kinds can appear. Future maintainers reading the union must trace registry.ts to know which kinds are reachable.",
+    "recommendation": "Drop `paths-missing`, `paths-empty`, and `path-malformed` from RegistryWarning. If a consumer was relying on the alias kinds (none in cycle 4 source), update the consumer to use the canonical kind.",
+    "evidence": "  | { kind: 'no-paths-dir'; message: string; path?: string; dir?: string }\n  | { kind: 'paths-missing'; message: string; path?: string; dir?: string }\n  | { kind: 'empty-paths-dir'; message: string; path?: string; dir?: string }\n  | { kind: 'paths-empty'; message: string; path?: string; dir?: string }",
+    "confidence": "high"
+  },
+  {
+    "id": "R1-003",
+    "title": "verifySpot does not catch VerificationModeUnsupportedError",
+    "severity": "low",
+    "category": "correctness",
+    "file": "mcp/server/src/tools/verifySpot.ts",
+    "line_range": "58-68",
+    "description": "The `runVerification(verSpec, projectRoot)` call at verifySpot.ts:58 has no try/catch. For cycle 4 all live spots in `paths/01-orderbook-viewer/phases.json` declare `verification.mode: 'compile'`, so the unsupported branches in verify.ts (test / simulate / custom) cannot fire. As soon as cycle 5+ adds a phase 2 / 3 spot with a non-compile verification mode before its adapter is wired, calling verifySpot at that cursor throws the error past the tool handler. The MCP tool wrapper in index.ts has no surrounding try, so the SDK turns the rejection into a generic transport error — losing the structured `mode` field and the recovery signal.",
+    "impact": "Forward-looking only; not exercised in cycle 4. When cycle 5 introduces test/simulate/custom verifications, the rollout will fail loudly rather than degrading. Other tool surfaces (loadPhases, loadState) all return structured errors via the same handler shape — verifySpot is the outlier.",
+    "recommendation": "Wrap the runVerification call in try/catch and convert VerificationModeUnsupportedError into a structured `{ pass: false, error: 'Verification mode <m> not yet supported' }` consistent with the surrounding error paths.",
+    "evidence": "  const verResult = await runVerification(verSpec, projectRoot);\n\n  if (verResult.pass) {",
+    "confidence": "medium"
+  },
+  {
+    "id": "R1-004",
+    "title": "compile-adapter command splitter is naive on whitespace",
+    "severity": "low",
+    "category": "correctness",
+    "file": "mcp/server/src/verify.ts",
+    "line_range": "70-72",
+    "description": "The compile adapter splits the verification command via `adapter.command.split(' ')`. This works for the cycle-4 sole value `'pnpm build'` but breaks on (a) double-space `'pnpm  build'` (yields an empty-string arg), (b) tab-separated args, (c) paths or args with embedded spaces (e.g. `'/Program Files/pnpm build'`), and (d) shell-style quoting. Phases.json schema currently accepts an arbitrary command string — a future path that uses anything richer than `'pnpm build'` will silently produce wrong argv.",
+    "impact": "No live failure in cycle 4. Cycle 5+ paths or external curriculum authors writing more complex build commands could see opaque ENOENT or cwd resolution failures that won't be obviously traced to argv mangling.",
+    "recommendation": "Either (a) document and validate that `command` must match a strict `\\S+(\\s+\\S+)*` shape (rejecting multi-spaces, tabs, quotes) at validatePhases time, or (b) use a shell-aware splitter (`shell-quote.parse`) or accept `command: string[]` as an alternative shape so callers can pre-split.",
+    "evidence": "    const parts = adapter.command.split(' ');\n    const cmd = parts[0];\n    const args = parts.slice(1);",
+    "confidence": "medium"
+  },
+  {
+    "id": "R1-005",
+    "title": "selectPath silently wipes cursor and ladder on re-selection",
+    "severity": "low",
+    "category": "correctness",
+    "file": "mcp/server/src/tools/selectPath.ts",
+    "line_range": "118-129",
+    "description": "selectPath unconditionally rebuilds state with `cursor: { phase_id: <first>, spot_id: <first> }` and `ladder: {}` whenever it runs. If the existing state already has `selected_path === slug` and a non-trivial cursor (e.g. user is mid-path at p2-spot-1 with hint_used and reference_shown true), a second `selectPath('01-orderbook-viewer')` call resets cursor to p1-bootstrap and clears ladder — silently destroying progress. Personalization and history are preserved; cursor and ladder are not. No test exercises this path (T-226/T-231 assert the absent-state initialization shape only).",
+    "impact": "User-visible data loss when the skill re-enters selectPath defensively (e.g. retry after an unrelated error, or cycle-5's ladder rung reset flow). The tool gives no warning and the response shape `{ ok: true, personalizationPrompts }` is identical between fresh and re-selected paths, so the skill cannot detect the wipe.",
+    "recommendation": "Either (a) refuse re-selection of the same slug with a structured `{ ok: false, errors: ['Path already selected — call resetProgress to start over'] }` and add a separate reset tool in cycle 5, or (b) preserve cursor/ladder when slug matches existing state (only re-init when slug differs or state is absent), or (c) at minimum surface a warning in the response when an existing cursor was discarded.",
+    "evidence": "  const newState: State = {\n    schema_version: STATE_SCHEMA_VERSION,\n    selected_path: slug,\n    personalization: existingState?.personalization ?? {},\n    cursor: { phase_id: firstPhase.id, spot_id: firstSpot.id },\n    ladder: {},",
+    "confidence": "high"
+  },
+  {
+    "id": "R1-006",
+    "title": "selectPath carries personalization across path-slug changes",
+    "severity": "low",
+    "category": "correctness",
+    "file": "mcp/server/src/tools/selectPath.ts",
+    "line_range": "120-127",
+    "description": "When existingState exists and `selectPath` is called with a different slug, `personalization: existingState?.personalization ?? {}` carries the previous path's personalization values into the new path's state. If path A declared a `pool_subset` enum value (e.g. 'BOTH_ALT') that is not valid under path B's declared options, the new state contains stale values that bypass validation (validatePersonalizationValues only fires when setPersonalization is called, not at path-switch time). Later nextSpot substitution would emit the stale value into the prompt.",
+    "impact": "Cycle 4 ships a single path so this is unreachable. Cycle 5+ when a second path is added, switching paths could leak invalid personalization keys/values into substituted prompts and into the skill's UI.",
+    "recommendation": "Reset `personalization: {}` when slug differs from `existingState.selected_path`; preserve it only when slug matches. Alternatively, run validatePersonalizationValues against the new path's declared options at selectPath time and drop any invalid keys.",
+    "evidence": "    selected_path: slug,\n    personalization: existingState?.personalization ?? {},",
+    "confidence": "medium"
+  }
+]

@@ -1,0 +1,93 @@
+[
+  {
+    "id": "R6-001",
+    "title": "Path traversal via spot.target_file allows arbitrary file overwrite",
+    "severity": "high",
+    "category": "security",
+    "file": "mcp/server/src/ladder.ts",
+    "line_range": "133",
+    "description": "runAutoWrite computes the target file path with `path.join(projectRoot, spot.target_file!)` and passes the result directly to fsPromises.readFile / fsPromises.writeFile with no boundary check. The phases schema validator (mcp/server/src/schemas/phases.ts:194) only checks that target_file is a string — it accepts any value, including '../../../etc/cron.d/evil' or absolute paths like '/etc/passwd'. Because path.join preserves '..' segments, a malicious phases.json (or one shipped by a third-party learning-path package the user installs) makes runAutoWrite read and overwrite arbitrary files outside projectRoot. Combined with R6-003's read-side traversal, this becomes a full read-then-write primitive that exfiltrates system files into student-controlled buffers and clobbers writable files anywhere on the filesystem.",
+    "impact": "Any phases.json that the engine consumes — including curriculum content authored by third parties or contributed via PRs to a course repo — can write arbitrary content to any file the MCP server process can write to. The auto-write fires the moment the student opts into rung 3, with no further confirmation. In an LLM-driven flow where the learner may not even read the proposed change, this is a silent fs.writeFile to attacker-chosen paths.",
+    "recommendation": "Before opening the target file, resolve it with path.resolve(projectRoot, spot.target_file) and assert the resolved path starts with projectRoot + path.sep (and is not equal to projectRoot). Reject with AutoWriteError kind:'target-path-outside-project' otherwise. Reject path.isAbsolute(spot.target_file) explicitly. Same check needs to apply to the rung-content path in requestHint.ts (R6-003). The contract's A2/A7 'literal-from-manifest' phrasing should not be read as 'no validation' — the literal-substitution rule is about NOT applying personalization, not about waiving path safety.",
+    "evidence": "const targetFilePath = path.join(projectRoot, spot.target_file!);",
+    "confidence": "high"
+  },
+  {
+    "id": "R6-002",
+    "title": "Path traversal via spot.id allows snapshot write outside snapshots directory",
+    "severity": "high",
+    "category": "security",
+    "file": "mcp/server/src/ladder.ts",
+    "line_range": "187-209",
+    "description": "The snapshot path is built as `path.join(snapshotsDir, ${spot.id}.bak)`. The phases.ts validator only checks that spot.id is a string (line 175). A malicious phases.json with `id: '../../../tmp/evil'` causes the snapshot writeFile to land at `<projectRoot>/.sui-deepbook-course/tmp/evil.bak` (or worse, outside projectRoot if more '..' segments are used). The contract A7 explicitly states the snapshot path is 'literal <projectRoot>/.sui-deepbook-course/snapshots/<spot.id>.bak' and that 'spot.id is the manifest slug, not a personalization key' — but the implementation never enforces that spot.id IS a slug-shaped string. The .bak file is created with mode 0o600 + wx flag, which limits some scenarios, but the directory-creation step (mkdir -p snapshotsDir) does not protect against the .bak path itself escaping. If an existing file at the resolved path exists, the wx flag fails closed (good); but if the path is novel, the write succeeds anywhere the process can write. The rotation step (rename bakPath → bakPath + '.<ts>') likewise carries the traversal forward.",
+    "impact": "A malicious phases.json can plant 0o600 files anywhere the MCP server process can write, including dotfiles, ~/.ssh/, /tmp seeded with attacker content (then included via subsequent reads), or known-pollutable XDG paths. Even in the benign case, a course author who picks an unfortunate spot.id (e.g. one containing a '/') silently breaks the snapshot location with no error surfaced to the student.",
+    "recommendation": "Validate spot.id against a strict slug regex at phases-load time (e.g. /^[a-z0-9][a-z0-9_-]*$/) — reject any id with '/', '..', '\\', or starting with '.' Apply the same regex to phase.id. Additionally, after computing bakPath, assert `path.resolve(bakPath).startsWith(path.resolve(snapshotsDir) + path.sep)`. Same check applies to the rotated path `${bakPath}.${ts}`. Surface AutoWriteError kind:'snapshot-path-invalid' on violation.",
+    "evidence": "const bakPath = path.join(snapshotsDir, `${spot.id}.bak`);",
+    "confidence": "high"
+  },
+  {
+    "id": "R6-003",
+    "title": "Path traversal via spot.rungs.* lets engine read arbitrary files into payload",
+    "severity": "high",
+    "category": "security",
+    "file": "mcp/server/src/tools/requestHint.ts",
+    "line_range": "176-203",
+    "description": "When spot.rungs is declared, requestHint reads the rung markdown via `path.join(projectRoot, 'paths', slug, rungRelPath)`. The phases.ts validator (lines 220-227) accepts rungs.hint_md / reference_md / auto_write_md as ANY string. A phases.json that sets `auto_write_md: '../../../../etc/passwd'` causes the engine to readFile arbitrary system files, run substitutePromptOnly over the contents, and (for rung 3) splice them into spot.target_file. The fallback path (line 189) also embeds spot.id and slug without traversal checks. This is a confused-deputy: the MCP server reads with its own (user-level) privileges, then writes the result wherever spot.target_file points (R6-001). Together, R6-001+R6-002+R6-003 form a complete arbitrary-read + arbitrary-write primitive, gated only on the student saying 'yes' to rung 3.",
+    "impact": "Sensitive local files (~/.aws/credentials, .env, ~/.ssh/id_rsa, ~/.config/Claude, etc.) become readable AND get spliced into a target_file the attacker also controls — potentially a publicly-served file (a README the student commits, a build artifact uploaded to npm, a frontend bundle hot-reloaded by Next.js). The rung-3 payload also flows through substitutePromptOnly, which could mangle binary content but reproduces text payloads byte-for-byte.",
+    "recommendation": "Resolve `path.join(projectRoot, 'paths', slug, rungRelPath)` with path.resolve and assert the result is contained inside `path.resolve(projectRoot, 'paths', slug) + path.sep`. Reject with rung-content-missing kind (or a new rung-path-invalid kind) on violation. Apply the same containment check to the fallback canonical path. Validate slug against a slug regex at selectPath time (currently selected_path is stored verbatim from path.json with no shape check — see registry/scan code).",
+    "evidence": "const rungContentPath = rungRelPath\n    ? path.join(projectRoot, 'paths', slug, rungRelPath)\n    : path.join(projectRoot, 'paths', slug, 'rungs', spot.id, rungFile);",
+    "confidence": "high"
+  },
+  {
+    "id": "R6-004",
+    "title": "outputStyleOk gate at requestHint runs probeOutputStyle but ignores its warnings",
+    "severity": "low",
+    "category": "security",
+    "file": "mcp/server/src/tools/requestHint.ts",
+    "line_range": "81-90",
+    "description": "The L002 carry-forward gate is correctly placed BEFORE loadState, satisfying the AC-1.3 zero-write-on-disabled invariant. However, probeOutputStyle returns more than just `ok` — it can return warnings (settings-file-missing, settings-parse-error, learning-output-style-disabled). The handler discards them and emits a generic message. Same pattern in selectPath/setPersonalization/nextSpot/verifySpot. Not exploitable; the gate is correctly load-bearing for AC-1.3. But discarding the underlying warning kind hides why the gate failed and could mask a settings-file-missing scenario where the student's environment is misconfigured rather than the output style being actively disabled.",
+    "impact": "Operational diagnostics-only: a student whose settings.json is malformed gets the same error as one who has the output style disabled. No security impact (the gate fails closed in both cases — zero writes on either failure mode).",
+    "recommendation": "Surface the underlying warning kind in the error message (e.g. include `styleCheck.warning?.kind` in the structured error). Optional — the gate's primary purpose (zero writes) is correctly enforced.",
+    "evidence": "const styleCheck = await probeOutputStyle();\n  if (!styleCheck.ok) {\n    return {\n      ok: false,\n      error: {\n        kind: 'output-style-disabled',\n        message: 'output-style-disabled: learning-output-style plugin is not enabled',",
+    "confidence": "medium"
+  },
+  {
+    "id": "R6-005",
+    "title": "Snapshot rotation timestamp collision risk on rapid retries",
+    "severity": "low",
+    "category": "security",
+    "file": "mcp/server/src/ladder.ts",
+    "line_range": "192-195",
+    "description": "Snapshot rotation uses `new Date().toISOString().replace(/:/g, '')` as the rotation suffix. The format includes milliseconds (e.g. 2026-04-28T120000.123Z), so within-process collisions are unlikely. However, the rotation uses `fsPromises.rename` (not `wx`) for the rotation step. If the rotated path already exists (extremely rapid clock-skewed retries, or a second process operating on the same projectRoot), rename will silently overwrite it on POSIX, destroying the older snapshot. The contract A7 says 'a student who hits rung 3 twice still has every prior version recoverable' — that promise is technically violated under collision.",
+    "impact": "Edge-case data loss: a malicious or buggy curriculum that triggers rung-3 retries within the same millisecond loses the prior snapshot. Not exploitable by an external attacker; a course author optimizing for retry-spam workflows would need to be aware.",
+    "recommendation": "After computing the rotated path, attempt `fsPromises.access(rotatedPath)` — if it exists, suffix with a counter (`.bak.<ts>.1`, `.bak.<ts>.2`, …). Or use `fs.linkSync` + unlink (atomic create-or-fail rename on POSIX). The existing code is correct under normal use.",
+    "evidence": "const ts = new Date().toISOString().replace(/:/g, '');\n    const rotatedPath = `${bakPath}.${ts}`;\n    await fsPromises.rename(bakPath, rotatedPath);",
+    "confidence": "medium"
+  },
+  {
+    "id": "R6-006",
+    "title": "Harness withDeployStub mutates global process.env without isolation",
+    "severity": "info",
+    "category": "security",
+    "file": "scripts/e2e/harness.ts",
+    "line_range": "211-227",
+    "description": "withDeployStub mutates process.env.E2E_DEPLOY_STUB and returns a cleanup function. If two harness instances run concurrently (vitest parallel test files), the second instance's setup races with the first's cleanup. This is test-infra-only and does not affect production security; flagging because the cycle 5 contract added a parallel pattern (verifyStub) that is per-instance and properly isolated, and the contrast is worth noting for future harness work.",
+    "impact": "Test-only flakiness in the rare case of concurrent harness usage. No production exposure.",
+    "recommendation": "If concurrent harness boots become a concern, switch the deploy stub from process.env to per-instance state (mirroring verifyStub). Optional.",
+    "evidence": "process.env.E2E_DEPLOY_STUB = '1';",
+    "confidence": "high"
+  },
+  {
+    "id": "R6-007",
+    "title": "AutoWriteFailedWarning interface uses kind_detail to dodge discriminator collision",
+    "severity": "info",
+    "category": "design",
+    "file": "mcp/server/src/warnings.ts",
+    "line_range": "107-112",
+    "description": "Contract A12 specifies that auto-write-failed carries `kind: 'target-file-missing' | ...` as an inner discriminator alongside spotId and message. The implementation renames the inner field to `kind_detail` to avoid colliding with the outer EngineWarning discriminator `kind: 'auto-write-failed'`. This is a reasonable engineering choice but diverges from the contract literally and means downstream consumers reading the contract will look for `warning.kind === 'target-file-missing'` and not find it. Not a security issue per se; flagging as a documentation/consumer mismatch the consolidator may want to track.",
+    "impact": "Future code that handles auto-write-failed warnings according to the contract will silently miss the detail field. No current consumer; auto-write-failed is currently surfaced inside requestHint's error.message as a string formatted '(<kind>): <message>', not as a structured warning emission.",
+    "recommendation": "Either rename to match (and adjust the contract) or document the rename explicitly in warnings.ts so consumers know the detail kind lives at .kind_detail. Mention in a follow-up ADR.",
+    "evidence": "kind: 'auto-write-failed';\n  spotId: string;\n  kind_detail: 'target-file-missing' | 'target-range-invalid' | 'snapshot-write-failed' | 'overwrite-failed';",
+    "confidence": "high"
+  }
+]

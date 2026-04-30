@@ -1,0 +1,39 @@
+{
+  "phases": [
+    {
+      "id": "setup",
+      "spots": [
+        {
+          "id": "scaffold",
+          "title": "Scaffold the project",
+          "prompt": "TBD in cycle 4"
+        },
+        {
+          "id": "connect",
+          "title": "Connect to DeepBook",
+          "prompt": "TBD in cycle 4"
+        }
+      ]
+    },
+    {
+      "id": "core",
+      "spots": [
+        {
+          "id": "fetch-orderbook",
+          "title": "Fetch orderbook data",
+          "prompt": "TBD in cycle 4"
+        }
+      ]
+    },
+    {
+      "id": "polish",
+      "spots": [
+        {
+          "id": "display",
+          "title": "Display the orderbook",
+          "prompt": "TBD in cycle 4"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,3 @@
+# Hint — Phase 2, Spot 1: Resilient gRPC Calls
+
+Think about what happens when a gRPC simulation call to the sandbox fails transiently — a container restart, a brief network hiccup, or a race during deployment. Instead of letting a single failure propagate immediately, you can wrap the call in a small retry helper. The helper should accept a generic async function and a configuration for how many times to retry and how long to wait between attempts (using exponential backoff so you don't hammer the server). Once you have the `withRetry` helper in place at lines 103–114 of `src/App.tsx`, your subsequent polling tick (phase 3) can call SDK methods through it and gain automatic resilience without any extra boilerplate at each call site.

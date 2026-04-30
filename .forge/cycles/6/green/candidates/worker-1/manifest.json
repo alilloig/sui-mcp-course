@@ -1,0 +1,26 @@
+{
+  "worker": 1,
+  "target_files": [
+    "paths/01-orderbook-viewer/phases.json",
+    "paths/01-orderbook-viewer/rungs/p2-spot-1/hint.md",
+    "paths/01-orderbook-viewer/rungs/p2-spot-1/reference.md",
+    "paths/01-orderbook-viewer/rungs/p2-spot-1/auto.md",
+    "paths/01-orderbook-viewer/rungs/p3-spot-1/hint.md",
+    "paths/01-orderbook-viewer/rungs/p3-spot-1/reference.md",
+    "paths/01-orderbook-viewer/rungs/p3-spot-1/auto.md",
+    "paths/01-orderbook-viewer/phases/p2.md",
+    "paths/01-orderbook-viewer/phases/p3.md",
+    "mcp/server/src/outputStyle.ts",
+    "mcp/server/src/state.ts",
+    "mcp/server/src/tools/selectPath.ts",
+    "mcp/server/src/tools/runPreflightProbe.ts",
+    ".forge/e2e/scenarios.json",
+    "scripts/cycle-e2e-pass.sh"
+  ],
+  "lines_changed": 210,
+  "files": 15,
+  "blocked": false,
+  "blocked_reason": null,
+  "tests_pass": null,
+  "notes": "Six targeted fixes for H001-H005: (1) phases.json renamed p2-polling→p2-retry, p3-display→p3-poll with spec-canonical target_ranges, rungs, doc_links, verification blocks, and {{ poll_interval_ms }} in p3 prompt; 8 new content-pack files created under rungs/ and phases/. (2) outputStyle.ts both bare { ok: false } branches replaced with { ok: false, warning: { kind: 'output-style-plugin-not-enabled', message: '...' } } naming the plugin and activation command. (3) state.ts archiveCorruptFile de-duplicates via content-hash in filename: second call with identical bytes finds existing archive and returns it without writing. (4) selectPath.ts: when kind==='corrupt' && archivedTo is defined, falls through to mint fresh State via saveState instead of short-circuiting with errors. (5) runPreflightProbe.ts: added probeOpts: Partial<Record<ProbeId, ProbeOptions>> parameter; forwarded into runProbe(pid, probeOpts[pid] ?? {}) for both the initial probe and the runDeployRemediation precondition checker. (6) scenarios.json E-008 preconditions array appended 'Sui CLI in 1.63.2–1.64.1' (en-dash, now 5 entries); scripts/cycle-e2e-pass.sh created as executable bash script with sui-cli version range check that emits 'skipped: sui cli out of supported range' for E-008 when host sui is outside 1.63.2-1.64.1."
+}

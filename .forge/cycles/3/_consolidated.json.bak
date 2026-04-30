@@ -1,0 +1,1168 @@
+[
+  {
+    "cluster_id": "C004",
+    "title": "runRealDeploy stdout/stderr handlers split chunks naively, splitting log lines that straddle reads",
+    "file": "mcp/server/src/probes/manifest.ts",
+    "line_ranges": [
+      "121-184",
+      "144-184",
+      "134-142",
+      "105-112",
+      "129-132"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      3
+    ],
+    "max_severity": "high",
+    "min_severity": "low",
+    "disputed_severity": true,
+    "categories": [
+      "error-handling"
+    ],
+    "recommendations": [
+      "Add `child.on('error', (err) => { clearTimeout(timeoutHandle); resolve({ pass: false, message: `Failed to spawn pnpm deploy-all: ${err.message}`, logs }); });` immediately after the spawn call. Consider also surfacing a dedicated warning kind (e.g. `preflight-deploy-spawn-error`) so the skill can distinguish 'pnpm missing' from 'deploy ran and timed out'.",
+      "Capture the exit code, include it in logs (`logs.push(`[deploy-all] exited with code ${code}`)`), and treat any non-zero exit as a distinct failure class — possibly a new `preflight-deploy-exit-nonzero` warning that surfaces the code alongside the captured logs. At minimum stop ignoring the code with `_code`.",
+      "Maintain a small per-stream buffer: keep the trailing partial line, prepend it to the next chunk, and only push completed lines. Flush the residual buffer on close.",
+      "Either thread the options through (e.g. read them from a module-level slot the harness sets via withDeployStub, or accept them as a parameter to runStubDeploy that the executor passes from a context object) or drop the unused parameters from the harness fixture signature. The current shape pretends to be configurable.",
+      "Schedule a SIGKILL escalation a few seconds after the SIGTERM: `setTimeout(() => { try { child.kill('SIGKILL'); } catch {} }, 5000)`. Track whether close has fired and clear that timer in the close handler."
+    ],
+    "descriptions": [
+      "The Promise in runRealDeploy only registers 'close' on the child. If spawn fails synchronously (e.g. EACCES) or asynchronously (the most common case on macOS/Linux is ENOENT when pnpm is on PATH at probe time but vanishes by the time the child actually executes — also possible if the spawned binary lacks +x), Node emits an 'error' event on the ChildProcess and never emits 'close'. With no 'error' listener, two things happen: (1) the promise never resolves, and (2) Node may treat the unhandled 'error' as an uncaught exception in some versions. The 7-minute timeoutHandle eventually calls child.kill() on a child that already failed, then close still doesn't fire, so the executor stays pending until the test runner / MCP transport gives up.",
+      "The close handler signature is `(_code: number | null) => {}` — the underscore prefix and lack of any subsequent reference indicate the exit code is intentionally discarded. After close, the executor unconditionally enters the manifest re-probe loop regardless of whether the deploy actually succeeded. If `pnpm deploy-all --quick` exits with code 1 (e.g. compile failure inside the sandbox), the only signal the student gets is 'manifest still unreachable after 3 attempts' — a downstream symptom, not the actual root cause. The deploy logs are present in the response but the categorical 'this deploy command failed' bit is lost.",
+      "Each `data` event runs `chunk.toString().split('\\n').filter(l => l.length > 0)` and pushes results into `logs`. There's no buffer for incomplete lines: if a Buffer arrives containing 'Error: cou' and the next contains 'ld not connect to localhost:9009\\n', logs will contain two entries 'Error: cou' and 'ld not connect to localhost:9009', neither of which greps cleanly. The contract test T-144 sends pre-formed lines so it doesn't catch this; real pnpm deploy output absolutely does straddle chunk boundaries.",
+      "The harness's `withDeployStub({ exitCode, exposeManifest })` accepts these inputs but they're never plumbed through. `runStubDeploy()` returns hardcoded `{ pass: false, message: '[stub] deploy-all ran but manifest is not up. Run: pnpm down to clean up.', logs: [...] }` — the harness fixture's `exposeManifest: true` (used to model the happy E-008-stub path) silently has no effect, and `exitCode: 1` cannot be exercised at all. T-155 happens to want pass:false, so cycle-3 tests stay green; future scenarios wanting a stubbed pass:true path are blocked.",
+      "On timeout, `child.kill()` (default SIGTERM) is called and the executor relies on the close event firing. A child that traps or ignores SIGTERM (pnpm itself doesn't, but a misbehaving deploy script run by pnpm could) won't exit, close won't fire, and the promise never resolves. Combined with R3-001 (no error handler), the failure modes for the deploy executor 'never resolve' are: spawn error before exec, child traps SIGTERM, child closes stdio without emitting close (rare but real on detached children)."
+    ],
+    "impacts": [
+      "Real-mode deploy remediation can hang the entire MCP request for 7 minutes on a misconfigured pnpm, masquerading as a deploy timeout. The student sees 'Deploy timed out after 420000ms' when the actual error was 'pnpm not found'. T-157 is correctly deferred to Phase F today, but Phase F will reproduce this hang under the right environmental conditions.",
+      "Diagnostic clarity: the surfaced warning reads as a manifest reachability problem when the underlying issue is a build/deploy failure. Skill-side messaging will guide the student toward 'pnpm down + retry' when the real fix is 'inspect the deploy logs for the compile error'. Non-trivial debugging cost on E-007-adjacent failures.",
+      "Captured logs in the response are unreliable for downstream pattern matching. T-155's 'pnpm down' message generation depends on the logs being legible to the consolidator. Diagnostic noise rather than data loss.",
+      "Tests that set exposeManifest:true silently get the manifest-not-up branch — a quiet contract mismatch between the harness API surface and the actual stub. Not a runtime error today; a foot-gun for cycle 4+ scenario authors.",
+      "Long-tail hangs in the 7-minute-and-a-second class. Less likely than R3-001 in practice but worth tightening since the cost is small."
+    ],
+    "evidence": "const timeoutHandle = setTimeout(() => {\n      timedOut = true;\n      child.kill();\n    }, DEPLOY_TIMEOUT_MS);",
+    "confidence_spread": [
+      "high",
+      "medium"
+    ],
+    "source_ids": [
+      "R3-001",
+      "R3-002",
+      "R3-006",
+      "R3-009",
+      "R3-010"
+    ]
+  },
+  {
+    "cluster_id": "C010",
+    "title": "EngineWarning's RegistryWarning member is open kind: string, not a discriminated union",
+    "file": "mcp/server/src/warnings.ts",
+    "line_ranges": [
+      "26-31"
+    ],
+    "agreement_count": 2,
+    "reviewers": [
+      1,
+      2
+    ],
+    "max_severity": "medium",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "correctness",
+      "design"
+    ],
+    "recommendations": [
+      "Replace the open `RegistryWarning` interface with a true union of literal-kinded interfaces covering every kind registry.ts emits: `MissingPathJsonWarning | MalformedPathJsonWarning | InvalidPathJsonWarning | NoPathsDirWarning | EmptyPathsDirWarning | MissingPhasesJsonWarning | MalformedPhasesJsonWarning | InvalidPhasesJsonWarning`. Drop the orphaned PathMalformedWarning/PathsEmptyWarning/PathsMissingWarning types that mix two kinds each — they collide with the cycle 1 wire kinds.",
+      "Replace RegistryWarning with an actual discriminated union of the kinds registry.ts emits (`'no-paths-dir' | 'empty-paths-dir' | 'missing-path-json' | 'malformed-path-json' | 'invalid-path-json' | 'missing-phases-json' | 'malformed-phases-json' | 'invalid-phases-json'`), drop the unused PathMalformedWarning/PathsEmptyWarning/PathsMissingWarning interfaces (or rename the active ones to match the wire kinds), so EngineWarning is a real discriminated union end-to-end."
+    ],
+    "descriptions": [
+      "Contract A20 says `warnings.ts exports the EngineWarning discriminated union`. Most members (StateWarning, PreflightWarning, output-style warnings) are properly discriminated by literal `kind`. The RegistryWarning member, however, is declared as `{ kind: string; ...}` — an open string. registry.ts emits eight distinct kinds at runtime (`no-paths-dir`, `empty-paths-dir`, `missing-path-json`, `malformed-path-json`, `invalid-path-json`, `missing-phases-json`, `malformed-phases-json`, `invalid-phases-json`) but only three of them are listed across the typed PathMalformed/PathsEmpty/PathsMissing interfaces, and those interfaces are not actually unioned into RegistryWarning — RegistryWarning shadows them with the open type. As a result, downstream consumers of EngineWarning (e.g. start.ts) cannot narrow on `warning.kind` to a literal at compile time for any registry-emitted warning.",
+      "RegistryWarning is declared as `{ kind: string; message: string; ... }` rather than a discriminated union of literal-typed variants (path-malformed, paths-empty, paths-missing, missing-path-json, malformed-path-json, invalid-path-json, missing-phases-json, malformed-phases-json, invalid-phases-json). Because RegistryWarning is a member of the EngineWarning union and accepts any string for `kind`, every EngineWarning effectively reduces to `{ kind: string; message: string }` at the discriminator level — narrowing such as `if (w.kind === 'state-corrupt')` no longer reliably narrows away other variants. The narrower interfaces declared above it (PathMalformedWarning, PathsEmptyWarning, PathsMissingWarning) are dead code: registry.ts pushes plain object literals typed as RegistryWarning rather than those interfaces, and the literal kinds those interfaces use (`path-malformed` etc.) don't actually appear in the runtime wire output (registry emits `malformed-path-json`, `empty-paths-dir`, `no-paths-dir`)."
+    ],
+    "impacts": [
+      "Wire format is preserved character-for-character (T-174 passes), so cycle 1+2 fixtures stay green. But the type-level discrimination promise of A20 is violated for the registry slice of the union — exhaustive switch/match constructs over EngineWarning silently degrade for registry kinds. Any future cycle that wants `assertNever`-style exhaustiveness on EngineWarning will not catch a missing registry kind.",
+      "Defeats the stated goal of A20 — a 'unified discriminated union'. Future code that switches on EngineWarning.kind cannot exhaustively check; the consolidator/cycle-4 caller will silently lose cases. The dead PathMalformedWarning/PathsEmptyWarning/PathsMissingWarning interfaces also create reader confusion: they look authoritative but are never instantiated."
+    ],
+    "evidence": "export interface RegistryWarning {\n  kind: string;\n  message: string;\n  path?: string;\n  dir?: string;\n}",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R1-003",
+      "R2-001"
+    ]
+  },
+  {
+    "cluster_id": "C003",
+    "title": "Deploy executor lives in probes/manifest.ts; should be its own deploy.ts module",
+    "file": "mcp/server/src/probes/manifest.ts",
+    "line_ranges": [
+      "46-185"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      2
+    ],
+    "max_severity": "medium",
+    "min_severity": "medium",
+    "disputed_severity": false,
+    "categories": [
+      "design"
+    ],
+    "recommendations": [
+      "Extract `runDeployRemediation`, `runStubDeploy`, `runRealDeploy`, `DeployRemediationResult`, and the `DEPLOY_TIMEOUT_MS`/`MAX_RECHECK_ATTEMPTS` constants into `mcp/server/src/probes/deploy.ts` (or `mcp/server/src/deploy.ts` if you accept it isn't a probe). manifest.ts then exposes only the probe and the `getSandboxCwd` helper (or moves that helper to deploy.ts). runPreflightProbe.ts imports `runDeployRemediation` from `deploy.js` instead of `probes/manifest.js`, which reads as: 'probe failed, hand off to the deploy module' — clearer than 'tool handler reaches into the manifest probe's internals'."
+    ],
+    "descriptions": [
+      "manifest.ts mixes two distinct responsibilities: (a) a passive read-only probe (`probeSandboxManifestReachable`, ~20 LOC) and (b) a non-trivial subprocess executor (`runDeployRemediation`, `runStubDeploy`, `runRealDeploy`, ~140 LOC) that spawns processes, manages timeouts, captures logs, and re-probes. The contract names this as 'the deploy executor lives in this file' but doing so makes manifest.ts the only probe file that owns active state-changing behavior. Every other probe file is a single ~20-50 LOC pure check; manifest.ts is ~185 LOC with two unrelated public surfaces. The file boundary obscures that the deploy executor is callable by the tool handler independent of the probe's pass/fail outcome, and the colocation forces the tool handler (`runPreflightProbe.ts`) to import `runDeployRemediation` from `probes/manifest.js` — leaking the probe abstraction."
+    ],
+    "impacts": [
+      "Future maintainers reading probes/manifest.ts have to mentally separate 'is this part of the probe or part of the executor?'. Tests that mock the manifest probe accidentally widen their reach to the executor (and vice-versa). The asymmetry — 7 probe files at ~30 LOC and one at ~185 LOC — is a code-smell signal that the boundary is wrong."
+    ],
+    "evidence": "export async function runDeployRemediation(\n  action: ShellAction,\n  checkPrecondition: PreconditionChecker,\n  opts: { spawn?: typeof spawn } = {},\n): Promise<DeployRemediationResult> {",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R2-002"
+    ]
+  },
+  {
+    "cluster_id": "C005",
+    "title": "checkManifest fetch has no timeout — blocked port can hang the probe",
+    "file": "mcp/server/src/probes/manifest.ts",
+    "line_ranges": [
+      "15-22"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      3
+    ],
+    "max_severity": "medium",
+    "min_severity": "medium",
+    "disputed_severity": false,
+    "categories": [
+      "error-handling"
+    ],
+    "recommendations": [
+      "Use `fetch(MANIFEST_URL, { signal: AbortSignal.timeout(5000) })` (Node 20.3+) or a manual AbortController. Same hardening on each of the three retry calls. The catch block already maps any rejection to `false`, so adding a timeout is non-breaking."
+    ],
+    "descriptions": [
+      "`fetch(MANIFEST_URL)` is called with no AbortSignal and no `signal: AbortSignal.timeout(N)`. The contract for probe #7 says 'short connect timeout'. On a healthy machine a refused localhost connection rejects fast (good), but on a host where port 9009 is bound by something hung (e.g. a stuck deploy from a previous run, a misconfigured docker-proxy holding the port open without responding), the fetch will hang for the OS default — Node's undici defaults can be tens of seconds. Combined with the post-deploy re-probe loop (3 attempts), that's potentially 3 × default_fetch_timeout of hang per remediation."
+    ],
+    "impacts": [
+      "Probe latency unbounded; under E-007-adjacent conditions the MCP request can stall the skill for an unbounded time. The deploy executor's 7-minute timeout doesn't cover the post-spawn re-probe phase since each fetch is independent."
+    ],
+    "evidence": "const response = await fetch(MANIFEST_URL);",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R3-005"
+    ]
+  },
+  {
+    "cluster_id": "C008",
+    "title": "saveState leaves orphan tmp files on any failure after writeFile — wx flag amplifies the problem",
+    "file": "mcp/server/src/state.ts",
+    "line_ranges": [
+      "138-156"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      3
+    ],
+    "max_severity": "medium",
+    "min_severity": "medium",
+    "disputed_severity": false,
+    "categories": [
+      "error-handling"
+    ],
+    "recommendations": [
+      "Wrap the open→sync→close→rename block in try/catch that unlinks the tmp file in the catch (best-effort, swallowing only ENOENT). Alternatively, document the expected cleanup behavior and add a startup sweep that removes stale `state.tmp-*` files older than a few minutes. The 'wx' guarantee that the file did not pre-exist needs a counterpart 'we always clean up after ourselves' guarantee."
+    ],
+    "descriptions": [
+      "saveState writes to `state.tmp-${Date.now()}-${Math.random().toString(36).slice(2)}.json` with `{ flag: 'wx' }`, then opens, syncs, closes, and renames. If anything between writeFile-success and rename throws (open rejects, sync rejects, close rejects, rename rejects with EBUSY/EACCES), the tmp file is left behind — there is no try/catch wrapping the durability sequence to unlink the tmp on failure. Combined with cycle 2's archive directory lifecycle, the user's `.sui-deepbook-course/` directory accumulates `state.tmp-*.json` files. Worse, a Math.random() suffix collision with a leftover tmp from a prior crashed run means the subsequent writeFile gets EEXIST and `saveState` permanently rejects — the contract surfaces it (good) but the recovery path requires the user to manually inspect and delete `.sui-deepbook-course/state.tmp-*.json`."
+    ],
+    "impacts": [
+      "Disk litter under normal operation; permanent saveState failure under collision (rare but real because Math.random() entropy is short and the user might run many save cycles). Cycle 2 carry-forward C016 was supposed to harden the durability path; the wx hardening introduces a new fallback hazard that wasn't present pre-cycle-3."
+    ],
+    "evidence": "await fsPromises.writeFile(tmpPath, bytes, { flag: 'wx', mode: 0o600 });",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R3-003"
+    ]
+  },
+  {
+    "cluster_id": "C009",
+    "title": "saveState calls fsync twice on the same fd to satisfy a stale test spy",
+    "file": "mcp/server/src/state.ts",
+    "line_ranges": [
+      "143-153"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      4
+    ],
+    "max_severity": "medium",
+    "min_severity": "medium",
+    "disputed_severity": false,
+    "categories": [
+      "simplicity"
+    ],
+    "recommendations": [
+      "Pick one. Either (a) update T-061 to spy on FileHandle.sync (which A18 explicitly prescribes) and drop the fs.fsyncSync(handle.fd) call, or (b) drop handle.sync() and keep only the legacy fsyncSync. Option (a) is the contract's intent; the comment itself flags the duplication as a backwards-compat hack rather than a durability requirement."
+    ],
+    "descriptions": [
+      "saveState's durability sequence first calls handle.sync() (the A18-prescribed FileHandle.sync) and then immediately calls fs.fsyncSync(handle.fd) on the same descriptor. The inline comment admits the second call is 'Redundant but required for T-061's fs.fsync* spy ordering assertion.' Production code is doing the same syscall twice solely so a leftover cycle-2 test ordering spy still fires."
+    ],
+    "impacts": [
+      "An extra fsync on every saveState write (cheap, but real I/O) and, more importantly, a load-bearing piece of production code whose only purpose is to keep a test happy. Future maintainers will see two fsyncs and reasonably wonder if removing one breaks durability — they have to dig into a defunct cycle-2 spy to understand."
+    ],
+    "evidence": "await handle.sync();\n      // Redundant but required for T-061's fs.fsync* spy ordering assertion.\n      fs.fsyncSync(handle.fd);",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R4-001"
+    ]
+  },
+  {
+    "cluster_id": "C016",
+    "title": "Module-level setSpawnOverride Map is a test seam in production code",
+    "file": "mcp/server/src/preflight.ts",
+    "line_ranges": [
+      "72-86"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      2
+    ],
+    "max_severity": "medium",
+    "min_severity": "medium",
+    "disputed_severity": false,
+    "categories": [
+      "design"
+    ],
+    "recommendations": [
+      "Push the spawn injection back into `ProbeOptions` and pass it explicitly through `runProbe(probeId, { spawn })`. The harness fixtures can store the SpawnFn in their own closure and pass it via the tool args (extending `runPreflightProbe` to accept a private testing param) or — cleaner — invoke the probe functions directly in tests without going through `runProbe`. If the global Map must stay, add a runtime guard: `setSpawnOverride` throws when called with a probeId whose probe doesn't accept `spawn` (currently node/manifest/suiPilot/sandboxRepo/learningOutputStyle)."
+    ],
+    "descriptions": [
+      "preflight.ts owns a module-private `Map<ProbeId, SpawnFn>` populated through the exported `setSpawnOverride` API. The Map is global mutable singleton state in the production module whose only consumer is `scripts/e2e/harness.ts` (a test harness). The synthesis-notes called out competing workers for putting `vi.spyOn` in production code; worker-4's choice avoided that, but replaced it with a different test seam — module-level mutable state with no production caller. The override mechanism also silently no-ops for probes that don't read `opts.spawn` (probes/node, probes/manifest, probes/suiPilot, probes/sandboxRepo, probes/learningOutputStyle): calling `setSpawnOverride('sui-pilot-enabled', fn)` installs an entry that's never read."
+    ],
+    "impacts": [
+      "(a) Production binary ships with a test-only API exported as part of the public preflight surface. A future consumer of `runProbe` could mistake setSpawnOverride for a real injection point. (b) Silent no-op overrides on the 5 probes that don't accept `spawn` will create maddening 'why is my stub not firing?' debugging sessions. (c) Global mutable Map in an async server is a footgun if/when concurrent tool calls land — one test's override leaks into a parallel call."
+    ],
+    "evidence": "const spawnOverrides = new Map<ProbeId, SpawnFn>();\n\nexport function setSpawnOverride(probeId: ProbeId, spawnFn: SpawnFn): () => void {\n  spawnOverrides.set(probeId, spawnFn);",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R2-003"
+    ]
+  },
+  {
+    "cluster_id": "C026",
+    "title": "T-125 lost its spy assertion — probe could re-implement settings parse and still pass",
+    "file": "tests/preflight.test.ts",
+    "line_ranges": [
+      "475-481"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      5
+    ],
+    "max_severity": "medium",
+    "min_severity": "medium",
+    "disputed_severity": false,
+    "categories": [
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "Restore the vi.mock or vi.spyOn(probeOutputStyle) and assert it was called exactly once in T-125. The current test does not match the contract written into tests.json."
+    ],
+    "descriptions": [
+      "tests.json T-125 specifies vi.mock probeOutputStyle and assert the spy was called exactly once. The actual test body drops both the mock and the call-count assertion: it just writes a real settings.json and asserts pass=true. Without the spy, T-125 only verifies an end-to-end happy path that any duplicated implementation (i.e. a probe that re-reads ~/.claude/settings.json itself) would also satisfy. The behavioral assertion that probe #8 delegates to probeOutputStyle is no longer enforced by T-125."
+    ],
+    "impacts": [
+      "If a future refactor inlines the settings.json read into learningOutputStyle.ts (the exact thing A9 forbids), T-125 will still pass green. The grep tests T-127/T-128 catch the static-text version of the violation, but a refactor that uses constructed-string concatenation (e.g. 'learning-output-style' + '@' + 'claude-plugins-official') could slip past both T-125 and T-127. The delegation contract is only weakly enforced by the import grep."
+    ],
+    "evidence": "it('T-125: delegates to probeOutputStyle and re-classifies pass', async () => {\n    writeSettings(\n      JSON.stringify({ enabledPlugins: { [ENABLED_PLUGIN_KEY]: true } }),\n    );\n    const result = await runProbe('learning-output-style-enabled', {});\n    expect(result.pass).toBe(true);\n  });",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R5-001"
+    ]
+  },
+  {
+    "cluster_id": "C027",
+    "title": "T-177 is missing the runProbe-not-called assertion that the spec promised",
+    "file": "tests/preflight.test.ts",
+    "line_ranges": [
+      "636-697"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      5
+    ],
+    "max_severity": "medium",
+    "min_severity": "medium",
+    "disputed_severity": false,
+    "categories": [
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "Add `const runProbeSpy = vi.spyOn(preflight, 'runProbe')` and `expect(runProbeSpy).not.toHaveBeenCalled()` after the runStart call. Without this, T-177 covers AC-1.3 (zero writes) but not AC-1.3's cycle-3 extension (no preflight when outputStyleOk=false)."
+    ],
+    "descriptions": [
+      "tests.json T-177 says 'vi.mock the preflight module with a spy ... AND the preflight module's runProbe spy was NEVER called'. The implemented test spies on every fs write surface but never spies on preflight.runProbe and never asserts it was uncalled. The test currently only re-verifies cycle-1's zero-write invariant; it does NOT verify the new cycle-3 promise that start.ts short-circuits before reaching preflight."
+    ],
+    "impacts": [
+      "A regression where start.ts runs preflight (e.g. eagerly pre-fetches probe results) before the outputStyle gate would not be caught by T-177 as long as no writes leak. The 'preflight is not reached' guarantee is unenforced."
+    ],
+    "evidence": "expect(promisesUnlinkSpy).not.toHaveBeenCalled();\n  });\n});",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R5-002"
+    ]
+  },
+  {
+    "cluster_id": "C007",
+    "title": "T-061 satisfied via redundant fs.fsyncSync call — implementation paying a real cost to please the spy",
+    "file": "mcp/server/src/state.ts",
+    "line_ranges": [
+      "146-153",
+      "143-153"
+    ],
+    "agreement_count": 4,
+    "reviewers": [
+      1,
+      2,
+      3,
+      5
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "correctness",
+      "design",
+      "error-handling",
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "Drop the fs.fsyncSync(handle.fd) line and update T-061 to spy on FileHandle.sync (or a higher-level invariant: writeFile-before-rename) instead of the legacy fs.fsync* surface.",
+      "Update T-061 in tests/state.test.ts to spy on `handle.sync` (the modern path) rather than `fs.fsyncSync`, then drop the `fs.fsyncSync(handle.fd)` line in production. The unused `import * as fs from 'node:fs';` at the top of state.ts can be removed once that's the only fs.* reference. Carry-forward to cycle 4.",
+      "Update T-061 in tests/state.test.ts to spy on `FileHandle.prototype.sync` instead of `fs.fsyncSync`, then drop the redundant `fs.fsyncSync(handle.fd)` call. The cycle-2 spy is now testing the wrong abstraction layer.",
+      "Either (a) update T-061 to spy on FileHandle.prototype.sync (or the open-spy returned handle's sync method, mirroring T-164's pattern) and remove the redundant fs.fsyncSync, or (b) drop T-061 in favor of T-164 + a new ordering test that uses the handle path. The current shape — production code carrying a comment 'this exists only to please the spy' — is the cleanest example of test-driving-impl in the cycle."
+    ],
+    "descriptions": [
+      "After the A18 rewrite to `fsPromises.open(tmpPath, 'r+') → handle.sync() → handle.close()`, the implementation also calls `fs.fsyncSync(handle.fd)` between handle.sync() and handle.close(). The inline comment admits this is 'redundant but required for T-061's fs.fsync* spy ordering assertion' — handle.sync() does not route through the JS-level fs.fsync export, so the legacy T-061 ordering spy needed a second sync. The contract A18 specified the durability sequence as open → sync → close → rename; it did not call for an extra fsyncSync, and carrying one in production code purely so a regression test can observe it leaks test concerns into the implementation.",
+      "saveState calls `await handle.sync()` then immediately calls `fs.fsyncSync(handle.fd)`. The inline comment explains: 'Redundant but required for T-061's fs.fsync* spy ordering assertion.' This is a smell in two directions: (a) production code has a no-op syscall whose only justification is a test from cycle 2 still asserting that path, and (b) the comment confirms the cycle-2 fix bundle (C002+C007+C009+C027) was incomplete — the migration to FileHandle.sync() should have updated T-061 to spy on the new path rather than keep the old fs.fsyncSync call alive.",
+      "After `await handle.sync()` (which already calls fdatasync/fsync under the hood), the implementation also runs `fs.fsyncSync(handle.fd)` with the comment 'Redundant but required for T-061's fs.fsync* spy ordering assertion.' This couples production durability code to test-spy mechanics. Concretely: if `handle.sync()` rejects, the finally still runs `handle.close()` (good), but if the redundant `fs.fsyncSync` throws (e.g. EBADF on an unusual filesystem, or after handle.sync fails to actually flush), the saveState rejection masks the original sync error. Errors from the redundant call shadow the more useful errors from the FileHandle path. The comment itself signals 'this is here for the test, not for correctness' — that's a maintenance smell.",
+      "saveState now calls handle.sync() AND fs.fsyncSync(handle.fd) back-to-back. The comment is explicit: 'Redundant but required for T-061's fs.fsync* spy ordering assertion.' This is a tests-vs-impl smell — the production code has an extra syscall solely to make a cycle-2 spy pass after the cycle-3 rewrite to FileHandle. T-061 spies on fs.fsync / fs.fsyncSync / fs.fdatasync but not on FileHandle.prototype.sync, so the cycle-3 idiomatic path (just handle.sync()) doesn't satisfy the cycle-2 ordering test. The implementer chose to keep both calls instead of updating T-061 to spy on FileHandle.sync."
+    ],
+    "impacts": [
+      "Two consecutive fsyncs on the same fd cost a second disk-flush per saveState. On NVMe this is sub-ms; on slow disks or networked FS it is observable. More importantly, the carry-forward couples future state.ts edits to a test detail that should have been migrated when the FileHandle pattern landed.",
+      "Two real-world consequences: the redundant sync executes a second blocking flush per saveState (negligible perf, but non-zero), and any future maintainer reading state.ts has to grok why a Node API is called after its modern replacement. More importantly, the pattern signals 'tests dictate production shape' which is the inverse of what TDD should produce.",
+      "Diagnostic clarity loss when sync genuinely fails on disk. Future maintainers seeing the redundant call may delete it (correctly) and break T-061. Conversely they may add a third fsync to satisfy a future spy. The cycle 2 carry-forward fix is real (the FileHandle is now from an 'r+' open, which addresses C002+C027) but the rewrite is half-done.",
+      "Low correctness impact — the redundant fsync is a no-op overhead. But it means T-061 is not enforcing what its name claims (writeFile→fsync→rename ordering on the underlying fd) — it is enforcing a legacy syscall pattern that the cycle-3 contract explicitly rewrote away from. Future readers will be confused why the code calls sync twice; the answer 'to satisfy T-061' is unsatisfying."
+    ],
+    "evidence": "  try {\n    await handle.sync();\n    // Redundant but required for T-061's fs.fsync* spy ordering assertion.\n    fs.fsyncSync(handle.fd);\n  } finally {\n    await handle.close();\n  }",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R1-002",
+      "R2-006",
+      "R3-004",
+      "R5-008"
+    ]
+  },
+  {
+    "cluster_id": "C020",
+    "title": "Identical defaultSpawn helper duplicated across docker.ts, pnpm.ts, and suiCli.ts",
+    "file": "mcp/server/src/probes/docker.ts",
+    "line_ranges": [
+      "25-42"
+    ],
+    "agreement_count": 2,
+    "reviewers": [
+      2,
+      4
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "design",
+      "simplicity"
+    ],
+    "recommendations": [
+      "Extract `defaultSpawn` (and the SpawnFn return type that already lives in preflight.ts) into a small `mcp/server/src/probes/spawnUtil.ts`. The three probe files import `defaultSpawn` from there. Probe files shrink to ~20 LOC each, which matches the single-responsibility shape of node.ts/sandboxRepo.ts/etc.",
+      "Extract `defaultSpawn` once into preflight.ts (or a small probes/spawn.ts) and have docker/pnpm/suiCli import it. The SpawnFn type already lives in preflight.ts; the default implementation belongs next to it."
+    ],
+    "descriptions": [
+      "An identical 18-line `defaultSpawn` helper (wrapping `spawnSync` with utf8 encoding, default 5s timeout, error rethrow, and a normalized return shape) is copy-pasted into `probes/docker.ts`, `probes/pnpm.ts`, and `probes/suiCli.ts`. The three copies are character-for-character identical aside from import order. Three places to update if the spawn timeout or error-handling policy changes; three places where a bug fix has to land.",
+      "The same 16-line `defaultSpawn` wrapper around spawnSync (encoding utf8, 5s timeout fallback, throw-on-result.error, status/stdout/stderr return) is copy-pasted verbatim in docker.ts (25-42), pnpm.ts (29-46), and suiCli.ts (59-76). Each probe also imports spawnSync independently. Three file-locations of the same boilerplate is roughly 50 LOC of duplication out of the cycle's 1351 LOC budget."
+    ],
+    "impacts": [
+      "Drift risk: a future patch to one copy (e.g. capturing exit signals, raising the timeout, adding env scrubbing) will be forgotten on the other two. Reviewer mental load is also tripled — three near-identical-but-not-confirmed-identical blocks must be diffed.",
+      "Three places to update if the timeout default changes, three places to keep in sync if the SpawnFn shape evolves, three opportunities for drift. One of the candidates that scored 580 LOC presumably collapsed this into preflight.ts or a shared helper."
+    ],
+    "evidence": "function defaultSpawn(\n  cmd: string,\n  args: string[],\n  opts?: { timeout?: number },\n): { status: number | null; stdout: string; stderr: string } {\n  const result = spawnSync(cmd, args, {\n    encoding: 'utf8',\n    timeout: opts?.timeout ?? 5000,\n  });",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R2-004",
+      "R4-004"
+    ]
+  },
+  {
+    "cluster_id": "C001",
+    "title": "Real-deploy branch has no SIGKILL fallback if child ignores SIGTERM after timeout",
+    "file": "mcp/server/src/probes/manifest.ts",
+    "line_ranges": [
+      "129-132",
+      "127-132"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      1
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "correctness"
+    ],
+    "recommendations": [
+      "Use action.timeoutMs ?? DEPLOY_TIMEOUT_MS in the setTimeout call so the action object remains the single source of truth for the executor's timeout.",
+      "After SIGTERM, schedule a follow-up SIGKILL (e.g. setTimeout(() => child.kill('SIGKILL'), 10000)) so a wedged child is forcibly reaped. Alternatively, race the close event against a hard deadline and resolve the promise even if close never fires (the os will eventually reap the child)."
+    ],
+    "descriptions": [
+      "runRealDeploy enforces the hard timeout via a setTimeout that uses the module-level DEPLOY_TIMEOUT_MS constant (420000). The action object passed in carries its own action.timeoutMs (which the manifest probe sets to 420000 on the fail path), but runRealDeploy never reads action.timeoutMs. If a future caller ever attaches a different timeoutMs to the shell action, the executor will silently use the module constant.",
+      "On the 7-minute timeout, runRealDeploy calls `child.kill()` which sends SIGTERM (Node's default). If the spawned `pnpm deploy-all --quick` ignores SIGTERM (e.g. a wrapper script that traps it, or a deeply-nested docker-compose subprocess that needs to drain), the `close` event never fires and the returned promise never settles. The contract calls this a 'hard timeout' but the implementation only enforces a soft TERM-and-hope."
+    ],
+    "impacts": [
+      "Today both values equal 420000 so the bug is dormant. Any future drift between the manifest probe's emitted action.timeoutMs and the executor's constant becomes invisible — the user-facing 'timeoutMs: ...' that runPreflightProbe surfaces in its response could disagree with what the executor actually enforces.",
+      "Under realistic deploy-all conditions on a slow CI host or a wedged Docker daemon, the MCP tool call could hang indefinitely past the 7-minute budget. T-145 doesn't catch this because makeFakeChild's kill() emits close synchronously. Phase F's real T-157 exercise is where this would surface — and the synthesis-notes already flagged Phase F as the gating scenario."
+    ],
+    "evidence": "const timeoutHandle = setTimeout(() => {\n      timedOut = true;\n      child.kill();\n    }, DEPLOY_TIMEOUT_MS);",
+    "confidence_spread": [
+      "high",
+      "medium"
+    ],
+    "source_ids": [
+      "R1-001",
+      "R1-005"
+    ]
+  },
+  {
+    "cluster_id": "C002",
+    "title": "Stub deploy branch skips the 3-attempt manifest re-probe loop entirely",
+    "file": "mcp/server/src/probes/manifest.ts",
+    "line_ranges": [
+      "105-112"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      1
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "correctness"
+    ],
+    "recommendations": [
+      "In runStubDeploy, accept an optional opts.exposeManifest signal (plumbed from the harness fixture, e.g. via a module-level register similar to setSpawnOverride) and either (a) return `{ pass: true }` when exposeManifest is true, or (b) re-run checkManifest() up to 3 times so the same loop logic applies to both branches. Either route makes the stub honest."
+    ],
+    "descriptions": [
+      "Contract A16 says `After spawn (success exit OR timeout), the manifest probe re-runs up to three times before classifying as a final stop`. runRealDeploy implements that with a 3-iteration checkManifest() loop. runStubDeploy, however, returns immediately with a hardcoded `pass: false, message: '[stub] deploy-all ran but manifest is not up. Run: pnpm down to clean up.'` and synthesised logs — it never re-probes the manifest, never observes whether the harness's exposeManifest fixture flag is true, and never honours opts.exposeManifest at all (the parameter is destructured as `_opts`, signalling unused)."
+    ],
+    "impacts": [
+      "T-155 and the harness's withDeployStub({ exposeManifest: true }) contract are not actually exercised: the stub always returns `pass: false`, so a fixture that promises to expose the manifest after a stub deploy is silently ignored. T-155 passes only because it asserts `pass === false` and a 'pnpm down' string match — both vacuously true regardless of the fixture's exposeManifest flag. The stub is therefore a tautology under cycle 3's tests; cycle 4+ that wants to exercise the success-after-stub path will need a real implementation."
+    ],
+    "evidence": "function runStubDeploy(): DeployRemediationResult {\n  // Deterministic in-process stub — never spawns a real subprocess\n  return {\n    pass: false,\n    message: '[stub] deploy-all ran but manifest is not up. Run: pnpm down to clean up.',\n    logs: ['[stub] pnpm deploy-all --quick started', '[stub] deploy-all exited 0'],\n  };\n}",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R1-004"
+    ]
+  },
+  {
+    "cluster_id": "C006",
+    "title": "Real-mode deploy timeout leaks the tool call when child ignores SIGTERM",
+    "file": "mcp/server/src/probes/manifest.ts",
+    "line_ranges": [
+      "129-145"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      6
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "security"
+    ],
+    "recommendations": [
+      "After child.kill(), schedule a second setTimeout (e.g. 10s grace) that escalates to child.kill('SIGKILL') and resolves the promise with the timeout warning unconditionally — even if 'close' never fires — so the MCP response is always produced within DEPLOY_TIMEOUT_MS + grace."
+    ],
+    "descriptions": [
+      "On the 7-minute timeout, the executor sets timedOut = true and calls child.kill() (default SIGTERM). The Promise only resolves inside child.on('close', ...). If the spawned process (pnpm → docker compose chain) ignores SIGTERM — which docker compose subprocesses can during slow image pulls or hung containers — child.on('close') never fires, the timeout warning is never delivered, and the tool call hangs the MCP request indefinitely."
+    ],
+    "impacts": [
+      "Not a confidentiality/integrity issue — the deploy command itself is hardcoded and the cwd is constructed from os.homedir(). The concrete failure mode is availability: a malicious or merely buggy local environment (a docker daemon hung mid-pull) lets the tool call sit forever, holding the MCP connection. Surfaces as 'never returns' rather than the contract-specified preflight-deploy-timeout warning, weakening A16's promise."
+    ],
+    "evidence": "const timeoutHandle = setTimeout(() => {\n      timedOut = true;\n      child.kill();\n    }, DEPLOY_TIMEOUT_MS);",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R6-003"
+    ]
+  },
+  {
+    "cluster_id": "C011",
+    "title": "Three orphan warning interfaces in warnings.ts encode wire kinds the registry doesn't actually emit",
+    "file": "mcp/server/src/warnings.ts",
+    "line_ranges": [
+      "5-24"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      2
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "design"
+    ],
+    "recommendations": [
+      "Either (a) remove `PathMalformedWarning`, `PathsEmptyWarning`, `PathsMissingWarning` and let the discriminated `RegistryWarning` (per R2-001's recommendation) carry only the emitted kinds, or (b) keep them but trim the union literals to the kinds registry.ts actually uses (drop `path-malformed`, `paths-empty`, `paths-missing`) and have registry.ts's warnings array typed as `(PathMalformedWarning | PathsEmptyWarning | PathsMissingWarning | …)[]`."
+    ],
+    "descriptions": [
+      "warnings.ts declares `PathMalformedWarning` with `kind: 'path-malformed' | 'malformed-path-json'`, `PathsEmptyWarning` with `kind: 'paths-empty' | 'empty-paths-dir'`, and `PathsMissingWarning` with `kind: 'paths-missing' | 'no-paths-dir'`. The `path-malformed`/`paths-empty`/`paths-missing` literals are listed in T-171 as expected wire values, but registry.ts only ever emits `malformed-path-json`, `empty-paths-dir`, and `no-paths-dir` (the second alternative in each pair). The first alternative in each union is dead — and tests/registry fixtures (per T-174) confirm the wire shape is the second alternative. So the union members are oversized: each encodes both a phantom kind and the actual one. Compounded by R2-001 (the wide `RegistryWarning`), these three interfaces are also unreferenced — registry.ts pushes object literals typed by RegistryWarning, not any of these named interfaces."
+    ],
+    "impacts": [
+      "Reader confusion: the file purports to be the source of truth for warning shapes, but three of its declarations are never instantiated and encode kind values that don't exist in the wire payload. T-171 (which only checks the literal substrings appear in the file) passes regardless, masking the dead code."
+    ],
+    "evidence": "export interface PathMalformedWarning {\n  kind: 'path-malformed' | 'malformed-path-json';\n  message: string;\n  path?: string;\n  dir?: string;\n}",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R2-010"
+    ]
+  },
+  {
+    "cluster_id": "C012",
+    "title": "Unused warning subtypes PathMalformedWarning, PathsEmptyWarning, PathsMissingWarning, PreflightFailWarning",
+    "file": "mcp/server/src/warnings.ts",
+    "line_ranges": [
+      "5-69"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      4
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "simplicity"
+    ],
+    "recommendations": [
+      "Either (a) actually use the narrow types — change registry.ts to construct `PathMalformedWarning` etc. and tighten RegistryWarning's `kind` to the literal union — or (b) drop the four unused interfaces and let T-171's grep be satisfied by the literal `kind` string in the EngineWarning union body. Don't carry both."
+    ],
+    "descriptions": [
+      "warnings.ts defines four named interfaces — PathMalformedWarning, PathsEmptyWarning, PathsMissingWarning, PreflightFailWarning — that no source or test file imports. registry.ts imports the broader `RegistryWarning` (which is just `{ kind: string; message: string; ... }`) and runPreflightProbe.ts imports only the deploy-specific PreflightDeployPreconditionFailedWarning / PreflightDeployTimeoutWarning. The four narrow types exist purely to satisfy a literal-string grep in T-171, which only checks that the `kind` strings appear in the file content."
+    ],
+    "impacts": [
+      "~25 LOC of speculative typing that nobody discriminates on. Future readers assume the discriminated union is load-bearing and waste effort preserving the tagged-literal shape. The fact that RegistryWarning narrows to `kind: string` (no literal union) defeats the discriminator anyway."
+    ],
+    "evidence": "export interface PathMalformedWarning {\n  kind: 'path-malformed' | 'malformed-path-json';\n  message: string;\n  path?: string;\n  dir?: string;\n}",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R4-006"
+    ]
+  },
+  {
+    "cluster_id": "C015",
+    "title": "Tool handler reaches into probes/manifest.ts for the deploy executor — leaks probe abstraction",
+    "file": "mcp/server/src/tools/runPreflightProbe.ts",
+    "line_ranges": [
+      "11-17",
+      "1-4"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      2
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "design"
+    ],
+    "recommendations": [
+      "Hoist a single `PreflightOutcome` type into `warnings.ts` (or a new `mcp/server/src/preflightTypes.ts`) and have both the tool handler and the deploy executor return it. The handler then becomes a passthrough on the remediate path: `return await runDeployRemediation(...)`.",
+      "Push the remediation executor into the probe interface itself: extend `ProbeFn` (or add a sibling `RemediationFn`) so each probe optionally exposes `remediate(action) => Promise<RemediationResult>`. The tool handler becomes: `if (remediate && result.action) return probe.remediate(result.action)`. Probes without a remediation simply don't expose the function. The handler is then truly probe-agnostic. (Smaller alternative: keep the current shape but add a comment in runPreflightProbe.ts explicitly acknowledging that today only manifest has remediation, and that the hard-coded import is deliberate-for-now.)"
+    ],
+    "descriptions": [
+      "Two near-identical result types coexist: `RunPreflightProbeResult { pass; message; action?; logs?; warning? }` in tools/runPreflightProbe.ts and `DeployRemediationResult { pass; message; logs?; warning? }` in probes/manifest.ts. The handler explicitly destructures one to construct the other (`return { pass: deployResult.pass, message: deployResult.message, ...(deployResult.logs ? ... : {}), ...(deployResult.warning ? ... : {}) }`). The shapes diverge only in that RunPreflightProbeResult includes `action?` (always undefined on the deploy path) — so the destructure is a structural identity transform.",
+      "runPreflightProbe.ts is the generic per-probe tool handler — it should be probe-agnostic. But it directly imports `runDeployRemediation` from `../probes/manifest.js` and applies it whenever the probe result has an attached ShellAction. The coupling makes the tool handler conceptually aware of one specific probe's secondary behavior. If a future probe (say, a probe #9 that offers `pnpm install`) attaches a different shell action with a different remediation, the tool handler would either grow a per-probe switch or pretend that one executor handles all shell remediations."
+    ],
+    "impacts": [
+      "Two types that mean the same thing means two places to update when a new field is added (e.g. cycle-4 might add `attempt: number`). The destructure-and-rebuild pattern in the handler also clouds the data flow; the reader has to verify by hand that no field is dropped.",
+      "The probe-registry abstraction (each probe is a uniform `(opts) => ProbeResult`) leaks at the tool handler. The handler's name and contract say 'run a probe'; in practice it also conditionally runs deploy. Adds a hidden per-probe coupling the registry was supposed to avoid."
+    ],
+    "evidence": "export interface RunPreflightProbeResult {\n  pass: boolean;\n  message: string;\n  action?: { kind: 'shell'; command: string; cwd?: string; timeoutMs?: number };\n  logs?: string[];\n  warning?: PreflightDeployPreconditionFailedWarning | PreflightDeployTimeoutWarning;\n}",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R2-007",
+      "R2-008"
+    ]
+  },
+  {
+    "cluster_id": "C017",
+    "title": "ProbeOptions.remediate is part of the probe interface but no probe reads it",
+    "file": "mcp/server/src/preflight.ts",
+    "line_ranges": [
+      "41-44"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      2
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "design"
+    ],
+    "recommendations": [
+      "Drop `remediate` from `ProbeOptions`. Probes only need spawn injection. The tool handler already owns the remediate gate. If ProbeOptions ends up containing only `spawn?`, consider renaming to `SpawnInjection` or inlining it as a single optional parameter."
+    ],
+    "descriptions": [
+      "`ProbeOptions` is declared as `{ spawn?: SpawnFn; remediate?: boolean }` and threaded through `runProbe` and every per-probe function signature. But none of the eight probes consult `opts.remediate` — the remediate decision is taken entirely in `tools/runPreflightProbe.ts` after the probe returns. The `remediate` field is dead concern in the probe-level abstraction. Worse, the manifest probe ignores `remediate` and always attaches the ShellAction on the fail path (correct per A8/A11 — the action is metadata, not an action trigger), which means `remediate` in ProbeOptions is documented to mean nothing at the probe layer."
+    ],
+    "impacts": [
+      "The ProbeOptions type misleads readers: a future probe author may believe they're supposed to branch on `opts.remediate`, leading to inconsistent behavior across probes. The contract also explicitly says (A11) that `remediate` is the tool-layer's concern, so leaking it into ProbeOptions confuses the layering."
+    ],
+    "evidence": "export type ProbeOptions = {\n  spawn?: SpawnFn;\n  remediate?: boolean;\n};",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R2-005"
+    ]
+  },
+  {
+    "cluster_id": "C018",
+    "title": "Two parallel spawn-injection mechanisms (opts.spawn and module-level setSpawnOverride)",
+    "file": "mcp/server/src/preflight.ts",
+    "line_ranges": [
+      "75-105",
+      "49-70"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      4
+    ],
+    "max_severity": "low",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "simplicity"
+    ],
+    "recommendations": [
+      "Pick one seam. The cleanest is to keep `ProbeOptions.spawn` and have the harness pass spawn through callTool args (or via a harness-scoped probe registry it builds itself). If a module-level registry is genuinely needed, drop the per-call `spawn` option to avoid the dual-seam confusion.",
+      "Optional refactor: define a single ordered tuple of `[probeId, probeFn]` pairs and derive both PROBE_ORDER (map first element) and PROBE_REGISTRY (Object.fromEntries) from it. Cuts one synchronization point."
+    ],
+    "descriptions": [
+      "ProbeOptions already exposes `spawn?: SpawnFn` as a per-call injection seam (used by the unit tests in preflight.test.ts). Cycle 3 adds a second, parallel mechanism: a module-level `spawnOverrides: Map<ProbeId, SpawnFn>` plus `setSpawnOverride(probeId, fn)` plus a merge step in runProbe (`opts.spawn ?? spawnOverride`). The harness uses the module-level registry; the unit tests use the call-site option. Two seams for the same concern.",
+      "Adding a new probe requires editing two structures: append to PROBE_ORDER (the literal-typed frozen array) and add an entry to PROBE_REGISTRY (the Record<ProbeId, ProbeFn> map). The contract claims 'adding a probe is one entry plus one literal in PROBE_ORDER', but in practice it's two coordinated edits, plus a new ProbeId in the union type — three places."
+    ],
+    "impacts": [
+      "Mutable module state with cleanup callbacks is a known footgun (forgotten cleanups → cross-test bleed). Two seams means a reader has to check both to predict what spawn fn will run. The merge precedence (`opts.spawn ?? spawnOverride`) is also surprising — 'option overrides override' rather than 'override wins'.",
+      "Low risk because TypeScript's exhaustiveness check on `Record<ProbeId, ...>` will catch a missing registry entry, and the test asserting PROBE_ORDER equality will catch a missing order entry. But the two-source-of-truth structure is more ceremonial than necessary."
+    ],
+    "evidence": "export const PROBE_ORDER: readonly ProbeId[] = Object.freeze([\n  'docker-running',\n...\nconst PROBE_REGISTRY: Record<ProbeId, ProbeFn> = {\n  'docker-running': probeDockerRunning,",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R4-005",
+      "R4-008"
+    ]
+  },
+  {
+    "cluster_id": "C019",
+    "title": "runProbe registry lookup uses bracket access without hasOwnProperty guard",
+    "file": "mcp/server/src/preflight.ts",
+    "line_ranges": [
+      "75-86",
+      "92-96"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      6
+    ],
+    "max_severity": "low",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "security"
+    ],
+    "recommendations": [
+      "Either (a) move the override Map and setSpawnOverride into a separate test-helpers module that is imported only from scripts/e2e/harness.ts and tests/, never from mcp/server/src/index.ts's transitive graph; or (b) gate the override on process.env.NODE_ENV === 'test' so it is a no-op in production stdio runs; or (c) keep the unit-test injection seam (opts.spawn parameter) and remove the module-level Map entirely, having the harness pass the spawn fn through a fixture-provided ProbeOptions instead.",
+      "Tighten the lookup to Object.prototype.hasOwnProperty.call(PROBE_REGISTRY, probeId) (or use a Map<ProbeId, ProbeFn> instead of an object literal) so the runProbe contract holds for direct callers, not just for callers that go through the tool's PROBE_ORDER.includes guard."
+    ],
+    "descriptions": [
+      "preflight.ts maintains a module-level mutable Map of spawn overrides keyed by probe id, and exports a public function setSpawnOverride that any caller in the same import graph can use to swap the spawn implementation of any probe at runtime. This is a test-only seam (used by scripts/e2e/harness.ts withDockerStub / withSuiCliStub fixtures) but it is not gated behind NODE_ENV, a test-only build, or a private symbol — it is part of the production export surface the MCP server ships.",
+      "runProbe does PROBE_REGISTRY[probeId as ProbeId] with only a falsy guard (if (!probe)). Because PROBE_REGISTRY is a plain object literal, lookups for inherited keys like 'constructor' resolve to Object (truthy) and 'toString' resolves to Object.prototype.toString (truthy callable). The if (!probe) guard does not detect these. The tool layer (runPreflightProbe.ts line 25) does pre-validate with PROBE_ORDER.includes(probeId), so the MCP-facing surface is safe — but runProbe is exported and any in-process importer that bypasses the tool can reach this state."
+    ],
+    "impacts": [
+      "No exploit path from the MCP boundary today: neither tool handler (start, runPreflightProbe) calls setSpawnOverride, and the registered Zod schemas don't accept an injectable spawn fn. Risk is forward-looking: any future tool, plugin, or third-party importer in the same runtime can poison probes #1/#3/#4 (the three spawn-driven probes) into reporting fake passes, undermining AC-2.4's hard-stop guarantee. Mirrors the synthesis-notes concern that workers must not leak test-API into production.",
+      "Not exploitable across the MCP trust boundary today. Calling runProbe('constructor', {}) in-process invokes Object as a function, returning a wrapped opts object that flows to the caller as a malformed ProbeResult ({ pass: undefined, message: undefined, action: undefined }). Calling runProbe('toString', {}) succeeds and returns a string, which downstream would treat as a non-result. No authorization bypass, no shell action emission."
+    ],
+    "evidence": "const spawnOverrides = new Map<ProbeId, SpawnFn>();\n\nexport function setSpawnOverride(probeId: ProbeId, spawnFn: SpawnFn): () => void {\n  spawnOverrides.set(probeId, spawnFn);",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R6-001",
+      "R6-002"
+    ]
+  },
+  {
+    "cluster_id": "C022",
+    "title": "suiPilot probe swallows JSON parse error and reports it as 'plugin not enabled'",
+    "file": "mcp/server/src/probes/suiPilot.ts",
+    "line_ranges": [
+      "19-27"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      3
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "error-handling"
+    ],
+    "recommendations": [
+      "Distinguish the three branches: ENOENT → 'settings file not found'; JSON parse error → 'settings.json has invalid JSON: <message>'; plugin not in enabledPlugins → current message. The PreflightFailWarning kind in warnings.ts can carry a probeId, but a richer surface or reusing SettingsParseErrorWarning would be cleaner."
+    ],
+    "descriptions": [
+      "When `~/.claude/settings.json` exists but contains invalid JSON, the probe's catch handler returns the same 'sui-pilot plugin is not enabled. Run: claude plugins enable sui-pilot' message it returns when settings.json is missing or when sui-pilot is genuinely disabled. The three failure modes are diagnostically distinct: missing file (run `claude plugins enable sui-pilot`), parse error (fix the JSON syntax), and plugin disabled (run the command). Conflating them causes the student to run `claude plugins enable sui-pilot` against a broken settings.json, which will likely fail or — depending on the claude CLI's resilience — silently succeed and reformat away other unrelated state."
+    ],
+    "impacts": [
+      "Misleading remediation message in the rare-but-real 'corrupt settings.json' case. Doesn't match the cycle-1 outputStyle.ts pattern, which uses dedicated `settings-file-missing` vs `settings-parse-error` warning kinds (already exported from warnings.ts but unused by the new probe)."
+    ],
+    "evidence": "} catch (_err) {\n    return {\n      pass: false,\n      message: 'sui-pilot plugin is not enabled. Run: claude plugins enable sui-pilot',\n    };\n  }",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R3-007"
+    ]
+  },
+  {
+    "cluster_id": "C023",
+    "title": "withSandboxRepoAbsent is a documented no-op — silently succeeds when caller forgets to set HOME",
+    "file": "scripts/e2e/harness.ts",
+    "line_ranges": [
+      "102-107"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      3
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "error-handling"
+    ],
+    "recommendations": [
+      "Either (a) actively set HOME inside the fixture to a tmp directory it owns and unsets in shutdown, mirroring withDeployStub's lifecycle; or (b) assert/verify HOME points to a directory without `workspace/deepbook-sandbox/` and throw if not. Silent no-ops are a class of fallback hazard."
+    ],
+    "descriptions": [
+      "The fixture's body is a comment block stating the probe reads HOME directly so the fixture is 'effectively a no-op'. If a future test calls `withSandboxRepoAbsent()` without first setting `process.env.HOME` to a temp directory, the fixture silently passes — and probeSandboxRepoPresent runs against the developer's real `~/workspace/deepbook-sandbox/`, which on the maintainer's machine almost certainly exists and returns pass:true. The test asserts pass:false, fails noisily on CI, but locally the developer sees a green run because their real sandbox checkout is present. False-positive test results during local iteration."
+    ],
+    "impacts": [
+      "Test scenario reliability; only matters when HOME is misconfigured by the caller. Cycle 3 tests do set HOME correctly today, so the harness fix doesn't manifest yet — but the fixture's contract is 'this fixture makes the sandbox absent', not 'this fixture asserts the caller already arranged absence'."
+    ],
+    "evidence": "// fixture is effectively a no-op — but it exists for API completeness",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R3-008"
+    ]
+  },
+  {
+    "cluster_id": "C024",
+    "title": "withDeployStub options exitCode and exposeManifest are declared but never read",
+    "file": "scripts/e2e/harness.ts",
+    "line_ranges": [
+      "115-131",
+      "102-107"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      4
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "simplicity"
+    ],
+    "recommendations": [
+      "Either (a) thread exitCode/exposeManifest through to runStubDeploy via a module-level handle (mirroring setSpawnOverride) so the stub honours them, or (b) drop both fields from the harness type and the test call sites — withDeployStub() with no args is enough since the stub is hardcoded.",
+      "Delete the method. T-163 already tolerates its absence (`typeof harness.withSandboxRepoAbsent === 'function'` guard). If a non-trivial fixture is genuinely needed later (e.g. moving HOME mid-test), reintroduce it then with real behavior."
+    ],
+    "descriptions": [
+      "withDeployStub is typed to accept { exitCode: number; exposeManifest: boolean } and the test fixtures dutifully pass values like { exitCode: 0, exposeManifest: false }. The implementation prefixes the parameter with `_opts:` and never reads either field — the whole body just toggles process.env.E2E_DEPLOY_STUB. Meanwhile runStubDeploy() in manifest.ts returns hardcoded { pass: false, message: '[stub]...' } regardless of what the harness 'configured'.",
+      "withSandboxRepoAbsent's body is a comment block explaining why it does nothing: 'this fixture is effectively a no-op — but it exists for API completeness'. The probe reads HOME directly, and the test setup already points HOME at an empty tempHome. A function that documents itself as a no-op is dead code wearing a fixture costume."
+    ],
+    "impacts": [
+      "Misleading API surface: every call site (and every reader) believes they are configuring stub behavior when they aren't. Either the stub branch needs to honour these options or the parameters should be removed. Currently a future test that passes exposeManifest: true will silently get exposeManifest: false behavior.",
+      "Readers infer state mutation that isn't happening and will introduce real bugs by 'matching' the pattern. Future test scenarios that need a different fixture-shape will copy this no-op shell."
+    ],
+    "evidence": "// The probe reads process.env.HOME / os.homedir() directly. The test\n      // already sets HOME = tempHome which has no sandbox checkout, so this\n      // fixture is effectively a no-op — but it exists for API completeness\n      // and to confirm E2E_DEPLOY_STUB is NOT set.",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R4-002",
+      "R4-003"
+    ]
+  },
+  {
+    "cluster_id": "C028",
+    "title": "T-152 / T-153 ordering tests are tautological — the test drives the order, not the system",
+    "file": "tests/harness.preflight.test.ts",
+    "line_ranges": [
+      "106-195"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      5
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "Either rename the tests to clarify they assert PROBE_ORDER content/iteration semantics (covered by T-097), or add a higher-level harness-driven walker that the skill would actually use, then assert *its* invocation log against PROBE_ORDER and stop-classification. As written they're near-duplicates of T-097 with extra ceremony."
+    ],
+    "descriptions": [
+      "Both T-152 (early-stop on docker fail) and T-153 (all-pass runs all 8) iterate PROBE_ORDER from the test, call runPreflightProbe for each id, and record what was 'invoked'. The recorded array is just whatever the test loop appended. T-152 breaks the loop on docker fail and asserts invoked === ['docker-running']; T-153 walks all 8 and asserts the recorded array equals PROBE_ORDER. Neither test verifies that the engine itself drives ordering — they verify their own loop logic."
+    ],
+    "impacts": [
+      "If the production caller (skill / orchestrator) calls probes in an arbitrary order, or fails to stop on a 'stop'-class failure, T-152/T-153 cannot detect it. The ordering invariant lives in the skill markdown and PROBE_ORDER export, not in the engine — so this is partially a contract limitation, but the test names oversell what is verified."
+    ],
+    "evidence": "for (const probeId of PROBE_ORDER) {\n        if (stopped) break;\n        const r = parseTextResult(\n          await harness.callTool('runPreflightProbe', { probeId }),\n        );\n        invoked.push(probeId);\n        if (probeId === 'docker-running' && r.pass === false) {\n          stopped = true;\n        }\n      }\n      expect(invoked).toEqual(['docker-running']);",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R5-003"
+    ]
+  },
+  {
+    "cluster_id": "C029",
+    "title": "T-155 (E-007) does not verify the 3-attempt re-probe loop in the harness scenario",
+    "file": "tests/harness.preflight.test.ts",
+    "line_ranges": [
+      "229-275"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      5
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "Either drop the '3 re-probes fail' wording from T-155's name, or restructure E-007 to drive the real-deploy branch with a mocked spawn that exits 0 (matching T-146's setup) so the retry loop actually fires under the harness."
+    ],
+    "descriptions": [
+      "tests.json T-155 says 'deploy stub exits 0 but no manifest comes up → 3 re-probes fail → stop with logs and pnpm down'. But because the test sets E2E_DEPLOY_STUB=1, runDeployRemediation takes runStubDeploy() which returns immediately with a hardcoded message containing 'Run: pnpm down' — no fetch retry loop runs. The assertion `JSON.stringify(r).toContain('pnpm down')` passes purely because the stub message includes that substring, not because three re-probes were observed. The 3-attempt budget is verified only by T-146, in the unit suite, against the real branch."
+    ],
+    "impacts": [
+      "T-155's wording implies an E-007 scenario verifying the retry loop end-to-end through the harness, but the chosen stub branch (no spawn, no fetch) cannot exercise the loop. If a future refactor breaks the 3-retry promise in real-mode, the E-007 harness test will not detect it; only T-146 will."
+    ],
+    "evidence": "process.env.E2E_DEPLOY_STUB = '1';\n    ...\n    const haystack = JSON.stringify(r);\n    expect(haystack).toContain('pnpm down');",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R5-004"
+    ]
+  },
+  {
+    "cluster_id": "C030",
+    "title": "T-157 dockerAvailable check uses 5s timeout — risk of false-negative skip on slow Docker startup",
+    "file": "tests/harness.preflight.test.ts",
+    "line_ranges": [
+      "22-32"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      5
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "Bump the gate timeout to 15s and log a clear `console.warn` when the skip triggers so Phase F operators can distinguish 'Docker absent' from 'Docker slow'. Alternatively, retry once on timeout before deciding."
+    ],
+    "descriptions": [
+      "T-157 gates on `spawnSync('docker', ['info'], { stdio: 'ignore', timeout: 5000 })`. On macOS especially, a freshly-launched Docker Desktop can take >5s to respond to `docker info` even when fully running. The 5s timeout means the gate can return a false negative (Docker IS running but slow), causing T-157 to skip silently when it should run. Combined with the green-gate having explicitly forced skip via DOCKER_HOST=tcp://127.0.0.1:1, the implication is that T-157 is rarely exercised by anyone — Phase F is the only place it's expected to run with real Docker, and even there a slow first-call could skip it without explanation."
+    ],
+    "impacts": [
+      "Low. The skip is honest in the orchestrator's forced-skip case (DOCKER_HOST forces failure). The realistic risk is in Phase F: a slow Docker may skip the test silently, causing the cycle to look like it covers E-008 when in fact it didn't. Hard to detect in CI. Not load-bearing for cycle 3 itself; flagged for Phase F awareness."
+    ],
+    "evidence": "const result = spawnSync('docker', ['info'], {\n      stdio: 'ignore',\n      timeout: 5000,\n    });\n    return result.status === 0;",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R5-006"
+    ]
+  },
+  {
+    "cluster_id": "C031",
+    "title": "T-138 stub-fired assertion is satisfiable by any non-empty message",
+    "file": "tests/runPreflightProbe.test.ts",
+    "line_ranges": [
+      "343-354"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      5
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "Tighten the assertion to look for the deterministic stub message marker (e.g. expect(message).toContain('[stub]')) so a different branch's message cannot satisfy the test."
+    ],
+    "descriptions": [
+      "tests.json T-138 says 'response is well-formed { pass, message } and the message OR a marker indicates the stub fired'. The test only asserts `typeof response.message === 'string'` and `message.length > 0`. Any non-empty message — including a precondition-failed warning, a probe-result passthrough, or an error string — would pass. There is no verification that the stub-deploy code path was actually taken (vs e.g. an early return on a precondition mismatch)."
+    ],
+    "impacts": [
+      "A regression where E2E_DEPLOY_STUB=1 silently falls through to a different branch (e.g. the precondition gate fires when it shouldn't, or runProbe is called for the stub) and returns some other non-empty message would still pass T-138. The stub-routing-took-effect invariant is only reliably enforced by T-137 (spawn count === 0). T-138 is a soft companion."
+    ],
+    "evidence": "expect(typeof response.pass).toBe('boolean');\n    expect(typeof response.message).toBe('string');\n    expect(response.message.length).toBeGreaterThan(0);",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R5-005"
+    ]
+  },
+  {
+    "cluster_id": "C032",
+    "title": "T-141 / T-142 grep tests skip dist/ but not all build artifact dirs",
+    "file": "tests/runPreflightProbe.test.ts",
+    "line_ranges": [
+      "402-449"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      5
+    ],
+    "max_severity": "low",
+    "min_severity": "low",
+    "disputed_severity": false,
+    "categories": [
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "Either narrow the walk to a hard-coded set of subdirs (`probes/`, `tools/`, `schemas/`, plus root `src/*.ts`), or extend the skip-list to include common build outputs. As-is the tests are correct but brittle to directory-layout changes outside the contract."
+    ],
+    "descriptions": [
+      "The walkTs helper for T-141/T-142 skips only `node_modules`. If a future build step or migration creates a sibling output dir (e.g. mcp/server/src/.cache, generated/) containing a copy of manifest.ts (or a generated literal 'E2E_DEPLOY_STUB'), T-142 will report `offenders.length > 1` and fail spuriously, OR T-141 will pick up extra E2E_* tokens and fail. Conversely, today the directory is clean, but the test does not pin an allowlist — it walks 'all .ts in src/'. Slightly fragile."
+    ],
+    "impacts": [
+      "Low. Currently passes; future-proofing concern only. The grep-style invariants are otherwise solid (only one literal in one file)."
+    ],
+    "evidence": "for (const entry of entries) {\n      const full = path.join(root, entry.name);\n      if (entry.isDirectory()) {\n        if (entry.name === 'node_modules') continue;\n        walkTs(full, out);",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R5-007"
+    ]
+  },
+  {
+    "cluster_id": "C013",
+    "title": "T-157 was skipped via DOCKER_HOST tampering, not via legitimate environment absence",
+    "file": ".forge/cycles/3/green/synthesis-notes.md",
+    "line_ranges": [
+      "20-26"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      1
+    ],
+    "max_severity": "info",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "tests-vs-impl"
+    ],
+    "recommendations": [
+      "In cycle 4 (or as a Phase F follow-up), add an integration test that drives runRealDeploy against a stubbed PATH containing a `pnpm` shell script (a real OS subprocess but a deterministic one). This exercises the spawn injection seam, stdout/stderr streaming, kill-on-timeout, and the 3-attempt re-probe loop without requiring Docker."
+    ],
+    "descriptions": [
+      "Synthesis notes record that T-157 (the only test that exercises the real `pnpm deploy-all --quick` spawn path end-to-end) was made to skip by setting `DOCKER_HOST=tcp://127.0.0.1:1` so that `docker info` fails and `describe.skipIf(!dockerAvailable)` triggers — even though Docker actually was running on the orchestrator host. The contract makes cycle 3 the implementation owner of the deploy executor; the only test that observes the executor's real-spawn path was tactically skipped to keep the green gate deterministic."
+    ],
+    "impacts": [
+      "The deploy executor's real-mode behaviour (R1-001 timeout-source, R1-005 SIGKILL gap) is unobserved by cycle 3's test suite. Phase F is now the first place these defects can surface, and any failure there will be interpreted as a Phase-F bug rather than a cycle-3 carry-over. The synthesis notes acknowledge this explicitly, so this is a process observation rather than a code defect — but the reviewer should flag it so cycle 4's contract considers whether the deploy executor needs a Docker-independent integration test (e.g. a fake `pnpm` shim on PATH that simulates the timeout/streaming/exit-code matrix)."
+    ],
+    "evidence": "To make the green gate deterministic in this orchestrator session (Docker IS running locally), the gate was run with `DOCKER_HOST=tcp://127.0.0.1:1` to make `docker info` fail and trigger the skip.",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R1-006"
+    ]
+  },
+  {
+    "cluster_id": "C014",
+    "title": "runProbe precondition checker passes empty opts; harness fixtures only work via module-level overrides",
+    "file": "mcp/server/src/tools/runPreflightProbe.ts",
+    "line_ranges": [
+      "54-57"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      1
+    ],
+    "max_severity": "info",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "design"
+    ],
+    "recommendations": [
+      "Either (a) plumb a ProbeOptions.spawn through the precondition checker by accepting an opts parameter on runPreflightProbe and threading it into runDeployRemediation's checkPrecondition callback, or (b) document that setSpawnOverride is global state and add a harness.shutdown invariant that snapshots/restores the registry around each boot."
+    ],
+    "descriptions": [
+      "When remediate=true, runPreflightProbe.ts builds a precondition checker that calls `runProbe(pid as ProbeId, {})` — empty options. This means per-call ProbeOptions.spawn injection is structurally impossible to flow into the precondition probes; the only way the harness can stub probes #1/#4/#6 during a remediation call is via setSpawnOverride's module-level Map. That works for cycle 3 tests, but it couples the harness API surface (withDockerStub/withSuiCliStub/withSandboxRepoAbsent) to a single global registry that is shared across all in-flight harness instances."
+    ],
+    "impacts": [
+      "Concurrent harness instances (e.g. parallel test files driving runPreflightProbe) would share the same setSpawnOverride map and step on each other. Today vitest runs files sequentially per worker so the bug is dormant; if cycle 4 ever enables parallel test files or if a single test boots two harnesses, fixture leakage becomes possible."
+    ],
+    "evidence": "const deployResult = await runDeployRemediation(\n    probeResult.action,\n    (pid) => runProbe(pid as ProbeId, {}),\n  );",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R1-007"
+    ]
+  },
+  {
+    "cluster_id": "C021",
+    "title": "registry.ts and tools/start.ts re-export warning types creating two import paths",
+    "file": "mcp/server/src/registry.ts",
+    "line_ranges": [
+      "5-7"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      2
+    ],
+    "max_severity": "info",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "design"
+    ],
+    "recommendations": [
+      "In cycle 4, drop the `export type { RegistryWarning };` from registry.ts and the analogous line from tools/start.ts; update any remaining importers to point at `warnings.js`. For this cycle, optionally add a `// TODO(cycle-4): drop re-export` comment so the cleanup intent is visible."
+    ],
+    "descriptions": [
+      "After unification, `registry.ts` does `import type { RegistryWarning } from './warnings.js'; export type { RegistryWarning };` and `tools/start.ts` does the analogous re-export of `StateWarning`. This means future consumers can import `RegistryWarning` from either `./registry` or `./warnings`, and `StateWarning` from either `./tools/start` or `./warnings`. The contract calls for unification into `warnings.ts`; preserving the legacy import paths via re-export is a migration aid that should be deleted in cycle 4 once references are updated, otherwise the dual-source-of-truth defeats unification's purpose."
+    ],
+    "impacts": [
+      "Slight; today nothing breaks. Going forward, code review can't easily tell whether `import { RegistryWarning } from '../registry'` reflects an old habit or an intentional choice. The unification benefit (single discoverable home for the union) is partially undone."
+    ],
+    "evidence": "import type { RegistryWarning } from './warnings.js';\n\nexport type { RegistryWarning };",
+    "confidence_spread": [
+      "high"
+    ],
+    "source_ids": [
+      "R2-009"
+    ]
+  },
+  {
+    "cluster_id": "C025",
+    "title": "Five probes accept ProbeOptions they never read (_opts parameter)",
+    "file": "mcp/server/src/probes/node.ts",
+    "line_ranges": [
+      "3-3"
+    ],
+    "agreement_count": 1,
+    "reviewers": [
+      4
+    ],
+    "max_severity": "info",
+    "min_severity": "info",
+    "disputed_severity": false,
+    "categories": [
+      "simplicity"
+    ],
+    "recommendations": [
+      "Acceptable as-is given the uniform registry constraint. If you tighten things later, consider splitting ProbeOptions into a base (empty) and SpawnProbeOptions (spawn-using) and let the registry hold a discriminated union — but only if a third option ever joins. Today's underscore convention is fine."
+    ],
+    "descriptions": [
+      "Of the eight probes, only docker.ts, pnpm.ts, and suiCli.ts actually consume `opts.spawn`. The other five — node.ts, suiPilot.ts, sandboxRepo.ts, manifest.ts, learningOutputStyle.ts — declare `_opts: ProbeOptions = {}` and never read it. The leading underscore makes the dead parameter explicit, but it's still five signatures carrying a parameter purely to satisfy the `ProbeFn` type."
+    ],
+    "impacts": [
+      "Mostly cosmetic — TypeScript's structural typing requires the signature to match `ProbeFn`. But it's a small smell that the abstraction (`ProbeOptions` with `spawn` and `remediate`) is shaped for the spawn-using probes only."
+    ],
+    "evidence": "export async function probeNodeVersion(_opts: ProbeOptions = {}): Promise<ProbeResult> {",
+    "confidence_spread": [
+      "medium"
+    ],
+    "source_ids": [
+      "R4-007"
+    ]
+  }
+]

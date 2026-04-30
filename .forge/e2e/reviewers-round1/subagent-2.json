@@ -1,0 +1,41 @@
+[
+  {
+    "id": "R2-001",
+    "title": "E-002 partial: outputStyleOk=false but no message names plugin or activation step",
+    "severity": "high",
+    "category": "e2e-flow",
+    "file": "mcp/server/src/outputStyle.ts",
+    "line_range": "46-64",
+    "description": "Scenario E-002 asserts that when learning-output-style@claude-plugins-official is set to false in ~/.claude/settings.json, the start tool must return outputStyleOk:false WITH a message that names 'learning-output-style' and the activation step. I drove the harness end-to-end with HOME pointed at a temp dir whose settings.json has the plugin set to false; the start tool correctly returns outputStyleOk:false and produces zero state-file mutations (AC-1.3 carry-forward holds), but the warnings array contains only an unrelated 'no-paths-dir' entry. probeOutputStyle returns a bare {ok:false} (no warning attached) for the disabled / missing-key case at lines 53 and 63, and start.ts therefore has no warning to surface. AC-1.1 explicitly requires 'a refusal naming the plugin and the activation step' on this exact path; that contract is unmet and the scenario fails its assertion 'message naming \"learning-output-style\" and the activation step'.",
+    "impact": "AC-1.1 is silently violated for the most common failure path (plugin entry exists with value false, or plugin entry absent from enabledPlugins). The student receives outputStyleOk:false with no actionable guidance, defeating the spec's stated UX goal that 'failure behavior is verbal' with a canned message naming the activation step. The skill layer will issue a generic refusal because no plugin-named message is available to render.",
+    "recommendation": "In probeOutputStyle, attach a warning on the disabled/missing-plugin paths (lines 53 and 63) with kind 'output-style-disabled' and a message like 'learning-output-style@claude-plugins-official is not enabled. Run: claude plugins enable learning-output-style@claude-plugins-official' so start.ts can propagate it. Alternatively, mirror probes/learningOutputStyle.ts's default-string fallback for the no-warning branches. Add an assertion in start.tool.test.ts that response.warnings includes a kind/output-style-related entry whose message names the plugin when outputStyleOk is false.",
+    "evidence": "E-002: probeOutputStyle returns `return { ok: false };` on lines 53 and 63 with no warning; harness run produced `outputStyleOk: false` and `warnings: [{ kind: 'no-paths-dir', message: '...' }]` with `any warning names \"learning-output-style\": false` and `state.json exists: false`.",
+    "confidence": "high"
+  },
+  {
+    "id": "R2-002",
+    "title": "E-003 passes: sui-pilot disabled produces exact remediation; flip-and-re-probe recovers",
+    "severity": "info",
+    "category": "e2e-flow",
+    "file": "mcp/server/src/probes/suiPilot.ts",
+    "line_range": "6-57",
+    "description": "Scenario E-003 walks the sui-pilot disabled path with guided remediation. I drove the harness with HOME pointed at a temp dir whose settings.json has 'sui-pilot@local': false, called runPreflightProbe('sui-pilot-enabled'), then flipped the setting to true and re-probed. Run 1 returned pass:false with message 'sui-pilot plugin is not enabled. Run: claude plugins enable sui-pilot' (containing the exact remediation string the spec calls out and that AC-2.1 requires). Run 2, after re-enabling, returned pass:true with message 'sui-pilot plugin is enabled.' This is the documented happy path of the scenario. The tests T-154 (harness.preflight.test.ts) corroborate this in the unit suite and pass cleanly. The probe correctly tolerates absent/malformed settings.json (early-return false with the same remediation), and matches any 'sui-pilot@*' key set to true (line 45-47), which gracefully handles the source-suffix variation noted by the spec ('sui-pilot@<source>'). The 'halts before path selection' part of the assertion is a skill-layer protocol concern, not the MCP tool's responsibility, and matches the architecture pattern documented in spec § Lesson Flow.",
+    "impact": "E-003 scenario passes end-to-end. AC-2.1 satisfied for this probe. No defect.",
+    "recommendation": "No change needed. (Optional tightening: probe message is identical for the 'malformed JSON' and 'plugin disabled' branches — could differentiate for diagnostics, but the spec calls for the canonical remediation in both cases, so this is by design.)",
+    "evidence": "E-003: harness driver returned `pass: false, message: 'sui-pilot plugin is not enabled. Run: claude plugins enable sui-pilot', contains \"claude plugins enable sui-pilot\": true` on disabled run; `pass: true, message: 'sui-pilot plugin is enabled.'` after re-enabling. Existing test T-154 in tests/harness.preflight.test.ts asserts the same and passes.",
+    "confidence": "high"
+  },
+  {
+    "id": "R2-003",
+    "title": "Output-style probe message-coverage divergence between disabled and missing-key paths",
+    "severity": "medium",
+    "category": "design",
+    "file": "mcp/server/src/outputStyle.ts",
+    "line_range": "33-64",
+    "description": "Three distinct failure branches in probeOutputStyle return inconsistent shapes. (a) settings file unreadable (line 23-31): returns warning kind 'settings-file-missing'. (b) settings file unparseable (line 36-44): returns warning kind 'settings-file-malformed'. (c) settings is parseable but missing enabledPlugins or plugin key absent / value !== true (lines 53, 63): returns bare {ok:false} with NO warning. The bare-{ok:false} branches are exactly the most-likely real-world cases that drive E-002 (a user with a normal settings file who simply hasn't enabled the plugin), yet they produce zero diagnostic content for downstream consumers (start.ts, learningOutputStyle.ts probe). The probe in probes/learningOutputStyle.ts compensates with a hardcoded fallback string at line 14-15, but start.ts has no such fallback and silently propagates outputStyleOk:false with no associated warning.",
+    "impact": "Inconsistent contract on the same probe interface. Downstream code paths in start.ts cannot uniformly construct a refusal message because the probe's warning may or may not exist depending on which branch fired. Encourages the kind of 'silent missing-data' bug demonstrated by R2-001.",
+    "recommendation": "Make probeOutputStyle return a warning on every !ok path. The two affected branches should return: { ok: false, warning: { kind: 'output-style-plugin-not-enabled', message: 'learning-output-style@claude-plugins-official is not enabled. Run: claude plugins enable learning-output-style@claude-plugins-official' } } (or similar). This unifies the contract and removes the need for fallback logic in callers.",
+    "evidence": "outputStyle.ts lines 53 and 63 both contain `return { ok: false };` with no warning attached, in contrast to lines 24-31 and 37-44 which return a warning. Scenarios affected: E-002.",
+    "confidence": "high"
+  }
+]

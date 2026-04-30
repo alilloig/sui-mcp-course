@@ -1,0 +1,740 @@
+[
+  {
+    "id": "T-097",
+    "name": "PROBE_ORDER is the exact spec-table order of eight probe ids",
+    "behavior": "import { PROBE_ORDER } from preflight.ts; assert PROBE_ORDER deep-equals ['docker-running','node-version','pnpm-available','sui-cli-version','sui-pilot-enabled','sandbox-repo-present','sandbox-manifest-reachable','learning-output-style-enabled']; assert PROBE_ORDER.length === 8",
+    "kind": "unit",
+    "target_file": "mcp/server/src/preflight.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A1"
+  },
+  {
+    "id": "T-098",
+    "name": "PROBE_ORDER is immutable at the type level (readonly tuple) and at runtime (frozen)",
+    "behavior": "assert Object.isFrozen(PROBE_ORDER) === true; attempting (PROBE_ORDER as any).push('x') throws (or is a no-op under frozen) and length stays 8",
+    "kind": "unit",
+    "target_file": "mcp/server/src/preflight.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A1"
+  },
+  {
+    "id": "T-099",
+    "name": "runProbe rejects an unknown probeId with a structured error",
+    "behavior": "import { runProbe } from preflight.ts; await expect(runProbe('does-not-exist' as any, {})).rejects.toThrow(/unknown probe/i) OR resolves to a structured failure result naming the probeId; never throws an uncaught non-Error",
+    "kind": "unit",
+    "target_file": "mcp/server/src/preflight.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A10"
+  },
+  {
+    "id": "T-100",
+    "name": "docker-running probe passes when injected spawn returns exit code 0",
+    "behavior": "stub spawn fn returns { status: 0, stdout: '', stderr: '' }; runProbe('docker-running') resolves to { pass: true, message: any-string, action: undefined }",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/docker.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A2"
+  },
+  {
+    "id": "T-101",
+    "name": "docker-running probe fails on non-zero exit with verbatim spec message",
+    "behavior": "stub spawn returns { status: 1, stderr: 'Cannot connect to the Docker daemon' }; result.pass === false; result.message contains the literal 'Docker Desktop is not running'; result.action === undefined",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/docker.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A2"
+  },
+  {
+    "id": "T-102",
+    "name": "docker-running probe fails on ENOENT (docker binary absent) with no shell action",
+    "behavior": "stub spawn raises ENOENT; result.pass === false; result.message contains 'Docker Desktop is not running'; result.action is undefined (probe #1 never offers shell remediation)",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/docker.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A2"
+  },
+  {
+    "id": "T-103",
+    "name": "node-version probe passes when process.version major is >= 18",
+    "behavior": "Object.defineProperty override of process.version to 'v20.10.0'; runProbe('node-version') returns { pass: true }; restore in afterEach",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/node.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A3"
+  },
+  {
+    "id": "T-104",
+    "name": "node-version probe fails when process.version major is < 18 and message names detected version literally",
+    "behavior": "override process.version to 'v16.20.0'; result.pass === false; result.message contains the substring 'v16.20.0' (or '16.20.0') verbatim",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/node.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A3"
+  },
+  {
+    "id": "T-105",
+    "name": "node-version probe never attaches a shell action on either branch",
+    "behavior": "for both pass (v20) and fail (v16) cases, result.action is undefined and JSON.stringify(result) does not contain \"kind\":\"shell\"",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/node.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A12"
+  },
+  {
+    "id": "T-106",
+    "name": "pnpm-available probe passes when injected spawn returns a parseable version",
+    "behavior": "stub spawn returns { status: 0, stdout: '8.15.4\\n' }; result.pass === true; message includes the detected version",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/pnpm.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A4"
+  },
+  {
+    "id": "T-107",
+    "name": "pnpm-available probe fails on ENOENT with the exact install hint",
+    "behavior": "stub spawn raises ENOENT; result.pass === false; result.message contains the literal 'npm install -g pnpm'; result.action === undefined",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/pnpm.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A4"
+  },
+  {
+    "id": "T-108",
+    "name": "pnpm-available probe fails on non-zero exit with install hint",
+    "behavior": "stub spawn returns { status: 127, stderr: 'pnpm: command not found' }; result.pass === false; result.message contains 'npm install -g pnpm'",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/pnpm.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A4"
+  },
+  {
+    "id": "T-109",
+    "name": "sui-cli-version probe passes for in-range versions (1.63.2, 1.63.5, 1.64.0, 1.64.1)",
+    "behavior": "for each version v in ['1.63.2','1.63.5','1.64.0','1.64.1']: stub spawn returns stdout 'sui '+v+'-abc'; runProbe returns { pass: true }",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/suiCli.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A5"
+  },
+  {
+    "id": "T-110",
+    "name": "sui-cli-version probe fails for below-range version (1.62.0) as a guided stop with brew hint",
+    "behavior": "stub spawn returns stdout 'sui 1.62.0'; result.pass === false; result.message contains both '1.62.0' and 'brew install sui'; runProbe DOES NOT throw",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/suiCli.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A5"
+  },
+  {
+    "id": "T-111",
+    "name": "sui-cli-version probe fails for above-range version (1.65.0) as a guided stop",
+    "behavior": "stub spawn returns stdout 'sui 1.65.0'; result.pass === false; result.message contains '1.65.0'; result.action === undefined (guided stop, no shell action)",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/suiCli.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A5"
+  },
+  {
+    "id": "T-112",
+    "name": "sui-cli-version probe never attaches a shell action even on fail",
+    "behavior": "force a fail (1.62.0); result.action is undefined and JSON.stringify(result) does not contain 'kind\":\"shell'",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/suiCli.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A12"
+  },
+  {
+    "id": "T-113",
+    "name": "sui-pilot-enabled probe passes when settings.json has sui-pilot@<source> = true",
+    "behavior": "process.env.HOME = tempHome; write ~/.claude/settings.json with enabledPlugins: { 'sui-pilot@alilloig': true }; runProbe('sui-pilot-enabled') returns { pass: true }",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/suiPilot.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A6"
+  },
+  {
+    "id": "T-114",
+    "name": "sui-pilot-enabled probe accepts any source suffix (matches sui-pilot@<anything>)",
+    "behavior": "settings.json has enabledPlugins: { 'sui-pilot@local-dev': true }; result.pass === true (the matcher is by 'sui-pilot@' prefix, not a fixed source)",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/suiPilot.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A6"
+  },
+  {
+    "id": "T-115",
+    "name": "sui-pilot-enabled probe fails when no matching key is present and message includes activation hint",
+    "behavior": "settings.json has enabledPlugins: { 'other-plugin@source': true }; result.pass === false; result.message contains the literal 'claude plugins enable sui-pilot'",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/suiPilot.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A6"
+  },
+  {
+    "id": "T-116",
+    "name": "sui-pilot-enabled probe fails when settings.json is missing entirely",
+    "behavior": "no settings file written; result.pass === false; result.message contains 'claude plugins enable sui-pilot'",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/suiPilot.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A6"
+  },
+  {
+    "id": "T-117",
+    "name": "sandbox-repo-present probe passes when ~/workspace/deepbook-sandbox is a directory",
+    "behavior": "process.env.HOME = tempHome; mkdirSync(tempHome/workspace/deepbook-sandbox, recursive); result.pass === true",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/sandboxRepo.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-118",
+    "name": "sandbox-repo-present probe fails (ENOENT) with the exact spec.md clone command",
+    "behavior": "tempHome is empty; result.pass === false; result.message contains the verbatim 'git clone --recurse-submodules https://github.com/MystenLabs/deepbook-sandbox.git ~/workspace/deepbook-sandbox'",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/sandboxRepo.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-119",
+    "name": "sandbox-repo-present probe fails (ENOTDIR) when path exists but is a file",
+    "behavior": "tempHome/workspace/deepbook-sandbox is a regular file (not a directory); result.pass === false; message contains the clone command",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/sandboxRepo.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-120",
+    "name": "sandbox-manifest-reachable probe passes when fetch returns HTTP 200 and never attaches an action",
+    "behavior": "global.fetch stub resolves Response { ok: true, status: 200, json: async () => ({}) }; result.pass === true; result.action === undefined (passing path NEVER carries an action)",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/manifest.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A8"
+  },
+  {
+    "id": "T-121",
+    "name": "sandbox-manifest-reachable probe fails on non-200 and attaches a shell action",
+    "behavior": "fetch stub resolves { ok: false, status: 503 }; result.pass === false; result.action.kind === 'shell'; result.action.command === 'pnpm deploy-all --quick'; result.action.cwd ends with 'deepbook-sandbox/sandbox' (or 'deepbook-sandbox/sandbox/'); result.action.timeoutMs === 420000",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/manifest.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A8"
+  },
+  {
+    "id": "T-122",
+    "name": "sandbox-manifest-reachable probe fails on connect refused (fetch rejects ECONNREFUSED)",
+    "behavior": "fetch stub rejects with Error code ECONNREFUSED; result.pass === false; result.action.kind === 'shell' with the deploy-all --quick command",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/manifest.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A8"
+  },
+  {
+    "id": "T-123",
+    "name": "sandbox-manifest-reachable probe fetches exactly http://localhost:9009/manifest",
+    "behavior": "spy on global.fetch; runProbe('sandbox-manifest-reachable'); fetch was called once with first arg === 'http://localhost:9009/manifest' (or URL with that exact href)",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/manifest.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A8"
+  },
+  {
+    "id": "T-124",
+    "name": "sandbox-manifest-reachable pass branch never carries an action even when remediate=true",
+    "behavior": "fetch returns 200; runProbe('sandbox-manifest-reachable', { remediate: true }) returns pass true with action undefined; passing path is unconditionally action-free",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/manifest.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A8"
+  },
+  {
+    "id": "T-125",
+    "name": "learning-output-style-enabled probe delegates to probeOutputStyle and re-classifies pass",
+    "behavior": "vi.mock('../mcp/server/src/outputStyle.js', () => ({ probeOutputStyle: vi.fn(async () => ({ ok: true })) })); runProbe('learning-output-style-enabled') returns { pass: true }; the spy was called exactly once",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/learningOutputStyle.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A9"
+  },
+  {
+    "id": "T-126",
+    "name": "learning-output-style-enabled probe re-classifies fail with the underlying warning message surfaced",
+    "behavior": "probeOutputStyle stub returns { ok: false, warning: { kind: 'learning-output-style-disabled', message: 'plugin disabled' } }; runProbe returns { pass: false }; result.message includes 'plugin disabled' OR a stable string referencing learning-output-style enablement",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/learningOutputStyle.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A9"
+  },
+  {
+    "id": "T-127",
+    "name": "learning-output-style-enabled probe source contains zero copies of the literal plugin key",
+    "behavior": "fs.readFileSync mcp/server/src/probes/learningOutputStyle.ts; assert content.indexOf('learning-output-style@claude-plugins-official') === -1 (the literal lives only in outputStyle.ts)",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/learningOutputStyle.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A9"
+  },
+  {
+    "id": "T-128",
+    "name": "learning-output-style-enabled probe imports probeOutputStyle from outputStyle.js",
+    "behavior": "fs.readFileSync the probe source; assert it contains an import statement referencing 'outputStyle' (e.g. /from\\s+['\\\"][^'\\\"]*outputStyle(\\.js)?['\\\"]/) and binds probeOutputStyle",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/learningOutputStyle.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A9"
+  },
+  {
+    "id": "T-129",
+    "name": "outputStyle.ts is unchanged in cycle 3 (literal plugin key still present in exactly one place)",
+    "behavior": "fs.readFileSync mcp/server/src/outputStyle.ts; assert it still contains 'learning-output-style@claude-plugins-official' (cycle-1 invariant preserved)",
+    "kind": "unit",
+    "target_file": "mcp/server/src/outputStyle.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A9"
+  },
+  {
+    "id": "T-130",
+    "name": "runPreflightProbe rejects unknown probeId without throwing uncaught",
+    "behavior": "import the tool handler; await runPreflightProbe({ probeId: 'totally-fake' }); resolves to a structured error response naming the probeId (e.g. { pass: false, message: matches /unknown/i and includes 'totally-fake' }) OR the handler rejects with a typed error — but never throws an uncaught exception",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/runPreflightProbe.ts",
+    "test_file": "tests/runPreflightProbe.test.ts",
+    "covers_contract_requirement": "A10"
+  },
+  {
+    "id": "T-131",
+    "name": "runPreflightProbe returns underlying probe result for known probe id",
+    "behavior": "vi.mock the preflight module so runProbe returns a deterministic { pass: true, message: 'fixture' }; runPreflightProbe({ probeId: 'docker-running' }) deep-equals { pass: true, message: 'fixture' } (no extra keys, no action)",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/runPreflightProbe.ts",
+    "test_file": "tests/runPreflightProbe.test.ts",
+    "covers_contract_requirement": "A10"
+  },
+  {
+    "id": "T-132",
+    "name": "runPreflightProbe with remediate=true is a no-op when probe attaches no action",
+    "behavior": "preflight stub returns { pass: false, message: 'X' } (no action); call runPreflightProbe({ probeId: 'docker-running', remediate: true }); response deep-equals the stub result; no spawn/fetch was invoked; the deploy executor was not called",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/runPreflightProbe.ts",
+    "test_file": "tests/runPreflightProbe.test.ts",
+    "covers_contract_requirement": "A11"
+  },
+  {
+    "id": "T-133",
+    "name": "runPreflightProbe with remediate=false never invokes deploy executor even when action is attached",
+    "behavior": "preflight stub returns { pass: false, action: { kind: 'shell', command: 'pnpm deploy-all --quick', cwd: '/x', timeoutMs: 420000 } }; runPreflightProbe({ probeId: 'sandbox-manifest-reachable', remediate: false }); spy on subprocess spawn assert 0 invocations; response unchanged",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/runPreflightProbe.ts",
+    "test_file": "tests/runPreflightProbe.test.ts",
+    "covers_contract_requirement": "A11"
+  },
+  {
+    "id": "T-134",
+    "name": "runPreflightProbe with remediate=true gates real deploy on probe #1 docker-running passing",
+    "behavior": "E2E_DEPLOY_STUB unset; manifest probe returns fail+action; docker probe stub returns { pass: false }; runPreflightProbe({ probeId: 'sandbox-manifest-reachable', remediate: true }); spy on subprocess spawn assert 0 invocations; response.warning.kind === 'preflight-deploy-precondition-failed' and warning identifies docker-running as the failing probe",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/runPreflightProbe.ts",
+    "test_file": "tests/runPreflightProbe.test.ts",
+    "covers_contract_requirement": "A13"
+  },
+  {
+    "id": "T-135",
+    "name": "runPreflightProbe with remediate=true gates real deploy on probe #4 sui-cli-version passing",
+    "behavior": "E2E_DEPLOY_STUB unset; manifest fail+action; docker pass; suiCli probe returns { pass: false, message: '1.62.0...' }; subprocess spawn invocations === 0; response surfaces 'preflight-deploy-precondition-failed' identifying sui-cli-version",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/runPreflightProbe.ts",
+    "test_file": "tests/runPreflightProbe.test.ts",
+    "covers_contract_requirement": "A13"
+  },
+  {
+    "id": "T-136",
+    "name": "runPreflightProbe with remediate=true gates real deploy on probe #6 sandbox-repo-present passing",
+    "behavior": "E2E_DEPLOY_STUB unset; manifest fail+action; docker pass; sui-cli pass; sandbox-repo-present returns { pass: false }; subprocess spawn invocations === 0; response surfaces 'preflight-deploy-precondition-failed' identifying sandbox-repo-present",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/runPreflightProbe.ts",
+    "test_file": "tests/runPreflightProbe.test.ts",
+    "covers_contract_requirement": "A13"
+  },
+  {
+    "id": "T-137",
+    "name": "E2E_DEPLOY_STUB=1 routes to stub branch and never calls subprocess spawn",
+    "behavior": "process.env.E2E_DEPLOY_STUB = '1'; manifest fail+action; preconditions all pass; spy on subprocess spawn AND spawnSync AND execFile (from node:child_process); runPreflightProbe({ probeId: 'sandbox-manifest-reachable', remediate: true }); each spy.mock.calls.length === 0; restore env in afterEach",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/manifest.ts",
+    "test_file": "tests/runPreflightProbe.test.ts",
+    "covers_contract_requirement": "A14"
+  },
+  {
+    "id": "T-138",
+    "name": "E2E_DEPLOY_STUB=1 stub branch returns a deterministic result instead of spawning",
+    "behavior": "process.env.E2E_DEPLOY_STUB = '1'; runPreflightProbe({ probeId: 'sandbox-manifest-reachable', remediate: true }); response is well-formed { pass: boolean, message: string } (and the message OR a marker indicates the stub fired) without any subprocess having run",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/manifest.ts",
+    "test_file": "tests/runPreflightProbe.test.ts",
+    "covers_contract_requirement": "A14"
+  },
+  {
+    "id": "T-139",
+    "name": "E2E_DEPLOY_STUB='true' (any non-'1' value) takes the real branch, not the stub",
+    "behavior": "process.env.E2E_DEPLOY_STUB = 'true'; preconditions pass; manifest fail+action; spy on injected real-spawn fn (mocked to no-op); runPreflightProbe({ probeId: 'sandbox-manifest-reachable', remediate: true }); real-spawn invocation count >= 1 (stub branch unreachable for non-'1' values)",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/manifest.ts",
+    "test_file": "tests/runPreflightProbe.test.ts",
+    "covers_contract_requirement": "A14"
+  },
+  {
+    "id": "T-140",
+    "name": "Similar env vars (E2E_DEPLOY=1, E2E_DEPLOY_STUB_=1) do NOT enter the stub branch",
+    "behavior": "for each name in ['E2E_DEPLOY','E2E_DEPLOY_STUB_','DEPLOY_STUB','E2E_STUB']: set env[name]='1'; preconditions pass; manifest fail+action; runPreflightProbe with remediate true; assert real-spawn was called (count >= 1) and stub did NOT fire; clean env after each",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/manifest.ts",
+    "test_file": "tests/runPreflightProbe.test.ts",
+    "covers_contract_requirement": "A14"
+  },
+  {
+    "id": "T-141",
+    "name": "Source grep: only one env-var name 'E2E_DEPLOY_STUB' appears in mcp/server/src/",
+    "behavior": "fs walk mcp/server/src/ for .ts; collect every regex match of /E2E_[A-Z_]+/g; assert the unique set is exactly { 'E2E_DEPLOY_STUB' } (no other E2E_* env var names exist in source)",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/manifest.ts",
+    "test_file": "tests/runPreflightProbe.test.ts",
+    "covers_contract_requirement": "A14"
+  },
+  {
+    "id": "T-142",
+    "name": "Source grep: 'E2E_DEPLOY_STUB' literal appears in exactly one source file (manifest.ts)",
+    "behavior": "fs walk mcp/server/src/ recursively; for each .ts file count occurrences of 'E2E_DEPLOY_STUB'; assert exactly one file has count >= 1 and that file's path basename is 'manifest.ts' (lives inside probes/)",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/manifest.ts",
+    "test_file": "tests/runPreflightProbe.test.ts",
+    "covers_contract_requirement": "A14"
+  },
+  {
+    "id": "T-143",
+    "name": "real branch (env unset) spawns pnpm deploy-all --quick with the resolved sandbox cwd and 7-minute timeout",
+    "behavior": "delete process.env.E2E_DEPLOY_STUB; process.env.HOME = tempHome with workspace/deepbook-sandbox/sandbox/ created; preconditions pass; manifest fail+action; spy on the injected spawn fn (returns mocked child that emits 'close' with code 0 and never blocks); runPreflightProbe({ probeId: 'sandbox-manifest-reachable', remediate: true }); spy was called once with cmd === 'pnpm', args[0] === 'deploy-all', args[1] === '--quick', opts.cwd ends with path.join('deepbook-sandbox','sandbox'), opts.timeout (or executor timeoutMs) === 420000",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/manifest.ts",
+    "test_file": "tests/runPreflightProbe.test.ts",
+    "covers_contract_requirement": "A15"
+  },
+  {
+    "id": "T-144",
+    "name": "real branch streams stdout/stderr lines back through the tool response",
+    "behavior": "spawn stub emits stdout 'line-a\\nline-b\\n' and stderr 'err-c\\n' before close(0); response captures these lines in an array (e.g. response.logs or response.lines); ['line-a','line-b','err-c'] is a subset of the captured array; line ordering preserves arrival order",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/manifest.ts",
+    "test_file": "tests/runPreflightProbe.test.ts",
+    "covers_contract_requirement": "A16"
+  },
+  {
+    "id": "T-145",
+    "name": "real branch enforces 7-minute hard timeout and surfaces preflight-deploy-timeout warning",
+    "behavior": "spawn stub returns a child that NEVER closes; vi.useFakeTimers(); runPreflightProbe with remediate true; vi.advanceTimersByTime(420001); the executor kills the child and returns a result whose warning.kind === 'preflight-deploy-timeout' with the captured logs and a message containing 'pnpm down'",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/manifest.ts",
+    "test_file": "tests/runPreflightProbe.test.ts",
+    "covers_contract_requirement": "A16"
+  },
+  {
+    "id": "T-146",
+    "name": "after spawn (success exit), manifest probe re-runs up to three times before classifying final stop",
+    "behavior": "spawn returns code 0; manifest fetch stub fails on calls 1,2,3 (all 503); runPreflightProbe; fetch was called exactly 3 times after spawn (in addition to the initial probe call); final response.pass === false with a stop classification containing the captured logs and a 'pnpm down' suggestion",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/manifest.ts",
+    "test_file": "tests/runPreflightProbe.test.ts",
+    "covers_contract_requirement": "A16"
+  },
+  {
+    "id": "T-147",
+    "name": "after spawn, manifest re-probe stops on first 200 within the 3-attempt budget",
+    "behavior": "spawn returns code 0; fetch stub fails on call 1 with 503, returns 200 on call 2; runPreflightProbe; fetch invocation count after spawn === 2 (no third probe); final response.pass === true",
+    "kind": "unit",
+    "target_file": "mcp/server/src/probes/manifest.ts",
+    "test_file": "tests/runPreflightProbe.test.ts",
+    "covers_contract_requirement": "A16"
+  },
+  {
+    "id": "T-148",
+    "name": "runPreflightProbe is the only tool whose source contains kind:'shell' literal",
+    "behavior": "fs walk mcp/server/src/tools/ for .ts; for each file content scan for /kind\\s*:\\s*['\\\"]shell['\\\"]/; the only file matching is runPreflightProbe.ts (path.basename === 'runPreflightProbe.ts')",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/runPreflightProbe.ts",
+    "test_file": "tests/runPreflightProbe.test.ts",
+    "covers_contract_requirement": "A12"
+  },
+  {
+    "id": "T-149",
+    "name": "start.ts source still contains zero kind:'shell' literals (cycle 1 A14/A16 preserved)",
+    "behavior": "fs.readFileSync mcp/server/src/tools/start.ts; assert /kind\\s*:\\s*'shell'/ and /kind\\s*:\\s*\"shell\"/ both fail to match (regression guard for AC-1.3 / cycle 1 A14)",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/start.ts",
+    "test_file": "tests/runPreflightProbe.test.ts",
+    "covers_contract_requirement": "A17"
+  },
+  {
+    "id": "T-150",
+    "name": "registerTools registers runPreflightProbe alongside start",
+    "behavior": "import { registerTools } from index.ts; pass a stub server that records every .tool(name,...) call; registered names include both 'start' and 'runPreflightProbe'",
+    "kind": "unit",
+    "target_file": "mcp/server/src/index.ts",
+    "test_file": "tests/runPreflightProbe.test.ts",
+    "covers_contract_requirement": "A21"
+  },
+  {
+    "id": "T-151",
+    "name": "engine outside paths/ and tests/fixtures/ contains zero '01-orderbook-viewer' literals (cycle 1 A10 preserved)",
+    "behavior": "fs walk REPO_ROOT but skip 'paths', 'tests/fixtures', 'node_modules', '.git', '.forge'; for each .ts/.tsx/.md/.json file content.indexOf('01-orderbook-viewer') must be -1; the offenders array is empty",
+    "kind": "unit",
+    "target_file": "mcp/server/src/index.ts",
+    "test_file": "tests/runPreflightProbe.test.ts",
+    "covers_contract_requirement": "A17"
+  },
+  {
+    "id": "T-152",
+    "name": "harness invokes preflight ordering — early stop on probe #1 docker fail",
+    "behavior": "harness scenario: bootHarness with docker-stub exitCode=1 (other probes' stubs would pass); call runPreflightProbe sequentially through PROBE_ORDER via the harness convenience wrapper or call each in sequence; record which probes were actually invoked (spy on the underlying probe registry); after probe #1 fails, the remaining 7 probes were NOT invoked (stop class)",
+    "kind": "integration",
+    "target_file": "mcp/server/src/preflight.ts",
+    "test_file": "tests/harness.preflight.test.ts",
+    "covers_contract_requirement": "A11"
+  },
+  {
+    "id": "T-153",
+    "name": "harness invokes preflight ordering — all-pass scenario runs all 8 probes in spec order",
+    "behavior": "harness scenario with every probe stubbed to pass; drive runPreflightProbe across PROBE_ORDER; the recorded invocation order equals PROBE_ORDER exactly; all 8 entries appear",
+    "kind": "integration",
+    "target_file": "mcp/server/src/preflight.ts",
+    "test_file": "tests/harness.preflight.test.ts",
+    "covers_contract_requirement": "A1"
+  },
+  {
+    "id": "T-154",
+    "name": "E-003: sui-pilot disabled → probe #5 fails with the activation hint and harness halts before path selection",
+    "behavior": "fixture: settings.json has 'sui-pilot@<source>' set to false; bootHarness; await harness.runPreflightProbe('sui-pilot-enabled'); response.pass === false; response.message contains 'claude plugins enable sui-pilot'; subsequent calls (e.g. selectPath) are not driven by the harness scenario walker",
+    "kind": "integration",
+    "target_file": "mcp/server/src/probes/suiPilot.ts",
+    "test_file": "tests/harness.preflight.test.ts",
+    "covers_contract_requirement": "A6"
+  },
+  {
+    "id": "T-155",
+    "name": "E-007: manifest unreachable + deploy stub exits 0 but no manifest comes up → 3 re-probes fail → stop with logs and pnpm down",
+    "behavior": "fixture: process.env.E2E_DEPLOY_STUB='1', withDeployStub({ exitCode: 0, exposeManifest: false }), manifest fetch stub keeps returning 503 across ALL retries; preconditions stubbed pass; harness.runPreflightProbe('sandbox-manifest-reachable', { remediate: true }); response.pass === false; response.message contains 'pnpm down' and references the captured logs (from the deploy stub); no path selection is offered",
+    "kind": "integration",
+    "target_file": "mcp/server/src/probes/manifest.ts",
+    "test_file": "tests/harness.preflight.test.ts",
+    "covers_contract_requirement": "A16"
+  },
+  {
+    "id": "T-156",
+    "name": "E-007: deploy-stub branch never spawns a real subprocess",
+    "behavior": "fixture sets E2E_DEPLOY_STUB=1 via withDeployStub lifecycle; spy on subprocess spawn (from node:child_process); harness.runPreflightProbe('sandbox-manifest-reachable', { remediate: true }); spawn.mock.calls.length === 0 across the entire scenario",
+    "kind": "integration",
+    "target_file": "mcp/server/src/probes/manifest.ts",
+    "test_file": "tests/harness.preflight.test.ts",
+    "covers_contract_requirement": "A15"
+  },
+  {
+    "id": "T-157",
+    "name": "E-008: real deploy-all --quick (Docker-gated, skipped if docker info fails)",
+    "behavior": "describe.skipIf(dockerNotAvailable) block — runs `docker info` synchronously; if exit non-zero skip the test; otherwise: harness scenario with E2E_DEPLOY_STUB unset, real ~/workspace/deepbook-sandbox/sandbox/ checkout, no containers running; harness.runPreflightProbe('sandbox-manifest-reachable', { remediate: true }); poll for manifest 200 up to 7 minutes; response.pass === true once the manifest comes up; teardown calls `pnpm down` from the sandbox dir to clean up",
+    "kind": "integration",
+    "target_file": "mcp/server/src/probes/manifest.ts",
+    "test_file": "tests/harness.preflight.test.ts",
+    "covers_contract_requirement": "A15"
+  },
+  {
+    "id": "T-158",
+    "name": "E-009: sandbox repo absent → probe #6 fails with clone command, no deploy attempted",
+    "behavior": "fixture: withSandboxRepoAbsent (HOME points at empty tempHome); harness.runPreflightProbe('sandbox-repo-present'); response.pass === false; message contains the verbatim clone command; harness.runPreflightProbe('sandbox-manifest-reachable', { remediate: true }) → response.warning.kind === 'preflight-deploy-precondition-failed' AND subprocess spawn was NEVER called",
+    "kind": "integration",
+    "target_file": "mcp/server/src/probes/sandboxRepo.ts",
+    "test_file": "tests/harness.preflight.test.ts",
+    "covers_contract_requirement": "A13"
+  },
+  {
+    "id": "T-159",
+    "name": "E-010: Docker not running → probe #1 fails as stop, no deploy attempted under any circumstance",
+    "behavior": "fixture: withDockerStub({ exitCode: 1 }); harness.runPreflightProbe('docker-running'); response.pass === false; message contains 'Docker Desktop is not running'; subsequent harness.runPreflightProbe('sandbox-manifest-reachable', { remediate: true }) → subprocess spawn invocations === 0 AND the response warning kind is 'preflight-deploy-precondition-failed' identifying docker-running",
+    "kind": "integration",
+    "target_file": "mcp/server/src/probes/docker.ts",
+    "test_file": "tests/harness.preflight.test.ts",
+    "covers_contract_requirement": "A13"
+  },
+  {
+    "id": "T-160",
+    "name": "E-011: Sui CLI 1.62.0 → probe #4 fails as guided stop with brew install hint",
+    "behavior": "fixture: withSuiCliStub({ version: '1.62.0' }); harness.runPreflightProbe('sui-cli-version'); response.pass === false; message contains '1.62.0' and 'brew install sui'; the harness does NOT throw — guided stop is a structured failure, not an exception",
+    "kind": "integration",
+    "target_file": "mcp/server/src/probes/suiCli.ts",
+    "test_file": "tests/harness.preflight.test.ts",
+    "covers_contract_requirement": "A5"
+  },
+  {
+    "id": "T-161",
+    "name": "harness exposes runPreflightProbe convenience wrapper that delegates to callTool",
+    "behavior": "bootHarness({ projectRoot }); typeof harness.runPreflightProbe === 'function'; calling it invokes harness.callTool('runPreflightProbe', {...}) once with the same args (verified via spy); response shape matches the underlying callTool response",
+    "kind": "integration",
+    "target_file": "scripts/e2e/harness.ts",
+    "test_file": "tests/harness.preflight.test.ts",
+    "covers_contract_requirement": "A21"
+  },
+  {
+    "id": "T-162",
+    "name": "harness fixture withDeployStub sets and unsets E2E_DEPLOY_STUB within its lifecycle",
+    "behavior": "before fixture activation: process.env.E2E_DEPLOY_STUB is undefined; activate withDeployStub({ exitCode: 0, exposeManifest: false }); inside the fixture: process.env.E2E_DEPLOY_STUB === '1'; after fixture cleanup: process.env.E2E_DEPLOY_STUB is restored to its prior value (undefined)",
+    "kind": "integration",
+    "target_file": "scripts/e2e/harness.ts",
+    "test_file": "tests/harness.preflight.test.ts",
+    "covers_contract_requirement": "A14"
+  },
+  {
+    "id": "T-163",
+    "name": "harness real-deploy fixtures do NOT set E2E_DEPLOY_STUB",
+    "behavior": "delete process.env.E2E_DEPLOY_STUB; activate withDockerStub / withSuiCliStub / withSandboxRepoAbsent (no deploy stub); inside any of these scenarios process.env.E2E_DEPLOY_STUB remains undefined (stub branch unreachable when withDeployStub isn't active)",
+    "kind": "integration",
+    "target_file": "scripts/e2e/harness.ts",
+    "test_file": "tests/harness.preflight.test.ts",
+    "covers_contract_requirement": "A14"
+  },
+  {
+    "id": "T-164",
+    "name": "saveState fsync uses the FileHandle returned by fsPromises.open (relationship assertion)",
+    "behavior": "vi.spyOn(fsPromises, 'open'); within the captured open promise's resolved value capture the returned FileHandle and patch its .sync to a spy; await saveState(root, validState); the patched .sync was called exactly once on the SAME FileHandle object the open returned (identity check), and was called AFTER open resolved and BEFORE rename was invoked",
+    "kind": "unit",
+    "target_file": "mcp/server/src/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A18"
+  },
+  {
+    "id": "T-165",
+    "name": "saveState opens the tmp file with 'r+' (not 'r')",
+    "behavior": "vi.spyOn(fsPromises, 'open'); await saveState(root, validState); among the open spy calls, find the call whose first arg is the tmp path under .sui-deepbook-course/; that call's flags arg (second positional) === 'r+' (or numeric equivalent O_RDWR=2); zero open calls for state-tmp use flag 'r'",
+    "kind": "unit",
+    "target_file": "mcp/server/src/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A18"
+  },
+  {
+    "id": "T-166",
+    "name": "saveState closes the FileHandle after sync and before/around rename",
+    "behavior": "spy on FileHandle.sync, FileHandle.close, and fsPromises.rename via the open spy's resolved value; await saveState; close was called exactly once on the same handle; close's invocationCallOrder > sync's invocationCallOrder",
+    "kind": "unit",
+    "target_file": "mcp/server/src/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A18"
+  },
+  {
+    "id": "T-167",
+    "name": "saveState tmp writeFile passes { flag: 'wx', mode: 0o600 }",
+    "behavior": "spy on fsPromises.writeFile; await saveState; among writeFile calls find the one targeting the tmp path under .sui-deepbook-course/; opts arg (third positional or the object form) deep-equals (or contains) { flag: 'wx', mode: 0o600 }; in particular opts.flag === 'wx' (refuses if file exists) and opts.mode === 0o600",
+    "kind": "unit",
+    "target_file": "mcp/server/src/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A19"
+  },
+  {
+    "id": "T-168",
+    "name": "archiveCorruptFile writeFile passes { flag: 'wx', mode: 0o600 }",
+    "behavior": "seed corrupt state.json; spy on fsPromises.writeFile; await loadState(root); the writeFile call targeting the state.corrupt-* archive path has opts.flag === 'wx' and opts.mode === 0o600",
+    "kind": "unit",
+    "target_file": "mcp/server/src/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A19"
+  },
+  {
+    "id": "T-169",
+    "name": "saveState round-trip still passes after the fsync FileHandle rewrite (regression)",
+    "behavior": "regression of T-064: saveState then loadState returns { kind: 'ok', state } deep-equal; ensures the cycle 2 carry-forward does not regress the durability path",
+    "kind": "unit",
+    "target_file": "mcp/server/src/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A18"
+  },
+  {
+    "id": "T-170",
+    "name": "saveState 'wx' flag refuses to overwrite a stale tmp file",
+    "behavior": "pre-create tmp path under .sui-deepbook-course/ as a stale file; await saveState(root, validState); under 'wx' the writeFile rejects EEXIST; saveState surfaces the failure (rejects or returns an error result) AND the canonical state.json is not overwritten",
+    "kind": "unit",
+    "target_file": "mcp/server/src/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A19"
+  },
+  {
+    "id": "T-171",
+    "name": "EngineWarning union exported from warnings.ts with all expected kinds (registry, state, preflight)",
+    "behavior": "fs.readFileSync mcp/server/src/warnings.ts; assert content contains the literal kind strings: 'path-malformed','paths-empty','paths-missing','state-corrupt','state-schema-mismatch','settings-file-missing','settings-parse-error','learning-output-style-disabled','preflight-fail','preflight-deploy-precondition-failed','preflight-deploy-timeout' (each appears at least once); content also contains the type-level identifier 'EngineWarning'",
+    "kind": "unit",
+    "target_file": "mcp/server/src/warnings.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A20"
+  },
+  {
+    "id": "T-172",
+    "name": "registry.ts imports its warning type from warnings.ts (no local declaration)",
+    "behavior": "fs.readFileSync mcp/server/src/registry.ts; assert it contains an import statement referencing 'warnings' (e.g. /from\\s+['\\\"][^'\\\"]*warnings(\\.js)?['\\\"]/); assert it does NOT contain a local 'type RegistryWarning =' or 'interface RegistryWarning' declaration",
+    "kind": "unit",
+    "target_file": "mcp/server/src/registry.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A20"
+  },
+  {
+    "id": "T-173",
+    "name": "tools/start.ts imports its warning type from warnings.ts (no local declaration)",
+    "behavior": "fs.readFileSync mcp/server/src/tools/start.ts; contains import from a path matching /warnings(\\.js)?$/; does NOT contain a local 'type StateWarning =' or 'interface StateWarning' declaration",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/start.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A20"
+  },
+  {
+    "id": "T-174",
+    "name": "registry warning wire kinds preserved character-for-character (cycle 1 fixtures still pass)",
+    "behavior": "scanRegistry against tests/fixtures/paths-malformed; result.warnings[0].kind === 'malformed-path-json' character-for-character; against tests/fixtures/paths-empty result.warnings[0].kind === 'empty-paths-dir'; absent paths/ → 'no-paths-dir'",
+    "kind": "unit",
+    "target_file": "mcp/server/src/registry.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A20"
+  },
+  {
+    "id": "T-175",
+    "name": "state warning wire kinds preserved character-for-character (cycle 2 fixtures still pass)",
+    "behavior": "loadState against a project with corrupt state.json yields result.kind === 'corrupt' (not renamed); the start tool surfaces a warning whose .kind === 'state-corrupt' verbatim; the schema-mismatch path surfaces .kind === 'state-schema-mismatch' verbatim",
+    "kind": "unit",
+    "target_file": "mcp/server/src/state.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A20"
+  },
+  {
+    "id": "T-176",
+    "name": "preflight warning kinds 'preflight-fail', 'preflight-deploy-precondition-failed', 'preflight-deploy-timeout' are all defined in warnings.ts",
+    "behavior": "fs.readFileSync mcp/server/src/warnings.ts; content contains literal strings 'preflight-fail', 'preflight-deploy-precondition-failed', and 'preflight-deploy-timeout' (all three appear at least once)",
+    "kind": "unit",
+    "target_file": "mcp/server/src/warnings.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A20"
+  },
+  {
+    "id": "T-177",
+    "name": "AC-1.3 preserved on cycle-3 surface: start tool with outputStyleOk=false performs zero writes AND never reaches preflight code path",
+    "behavior": "vi.mock outputStyle to return { ok: false }; vi.mock the preflight module with a spy; spy on fs and fsPromises write surfaces (writeFile, writeFileSync, mkdir, mkdirSync, rename, renameSync, unlink); seed a temp project root with paths/04-fake-path; await runStart({ projectRoot: tempRoot }); response.outputStyleOk === false AND every write spy mock.calls.length === 0 AND the preflight module's runProbe spy was NEVER called",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/start.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A17"
+  },
+  {
+    "id": "T-178",
+    "name": "tsc --noEmit on mcp/server/ exits zero with the cycle-3 additions",
+    "behavior": "spawnSync 'pnpm --filter ./mcp/server exec tsc --noEmit'; result.status === 0 (compiles cleanly under strict + moduleResolution NodeNext including the new preflight + warnings + tool + probe modules)",
+    "kind": "unit",
+    "target_file": "mcp/server/tsconfig.json",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A21"
+  }
+]

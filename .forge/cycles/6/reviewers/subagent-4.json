@@ -1,0 +1,67 @@
+[
+  {
+    "id": "R4-001",
+    "title": "findExistingArchive does redundant read+rehash per directory entry; encoding hash in filename would avoid the O(N) scan",
+    "severity": "low",
+    "category": "simplicity",
+    "confidence": "high",
+    "file": "mcp/server/src/state.ts",
+    "line_range": "118-144",
+    "description": "findExistingArchive reads up to N existing archive files on every archiveCorruptFile call, computing crypto.createHash('sha256') on each one's body, only to compare against the candidate's hash. Encoding the content hash directly in the archive filename (e.g. 'state.corrupt-<hash>-<ts>.json' or 'state.corrupt-<hash>.json') would let the dedup check be a single fs.existsSync(path.join(stateDir, 'state.corrupt-' + hash + '.json')) — O(1) instead of O(N), no read/rehash loop. Same correctness; smaller code; better perf as archives accumulate.",
+    "impact": "Performance scales O(N) with archive count, where N grows unbounded across student sessions. Each call also allocates and discards the SHA-256 of every existing archive's body. In the worst case (a long-lived install with many corruption events), this is a perceptible delay on every loadState call.",
+    "recommendation": "Encode the content hash in the archive filename: 'state.corrupt-<sha256-hex16>-<isoTs>.json'. Replace findExistingArchive with a single fs.existsSync check on the candidate filename derived from the hash. Drop the read+rehash loop.",
+    "evidence": "state.ts:118-144 in applied worker-4. Loop at L131-142 reads each /^state\\.corrupt-.*\\.json$/ entry's body and rehashes it just to compare to the candidate's hash."
+  },
+  {
+    "id": "R4-002",
+    "title": "archiveCounter module-level mutable state is now redundant given content-hash dedup",
+    "severity": "info",
+    "category": "simplicity",
+    "confidence": "medium",
+    "file": "mcp/server/src/state.ts",
+    "line_range": "13-18",
+    "description": "Pre-cycle-6, two corruptions in the same wall-clock second needed disambiguation via a monotonic counter (archiveCounter at module scope). Cycle 6 H003 introduces content-hash dedup. The disambiguation is now redundant in the IDENTICAL-content case (which dedupes to 1 archive) and superseded by the content hash in the DISTINCT-content case (where two different hashes already differ in the filename even at the same timestamp). The module-level mutable state can be removed if the filename embeds the content hash (see R4-001).",
+    "impact": "Dead-weight complexity. Module-level mutable state increases test isolation surface and is ESM-unfriendly under live-reload tooling.",
+    "recommendation": "Couple this with R4-001: when the filename embeds the content hash, archiveCounter is no longer needed for disambiguation and can be deleted.",
+    "evidence": "state.ts:13-18 in applied worker-4; R4-001 documents the alternative naming scheme that eliminates this."
+  },
+  {
+    "id": "R4-003",
+    "title": "start.ts uses a type-cast workaround instead of declaring archivedTo on the warning shape",
+    "severity": "low",
+    "category": "simplicity",
+    "confidence": "high",
+    "file": "mcp/server/src/tools/start.ts",
+    "line_range": "63-65",
+    "description": "start.ts uses `(warning as { archivedTo?: string }).archivedTo = stateResult.archivedTo` to attach archivedTo to the warning. This is a type-cast workaround for a missing optional field on the warning union. Declaring archivedTo as an optional field on the relevant warning interface in warnings.ts would remove the cast.",
+    "impact": "Mild — type-cast hides the structural change from the type system. A refactor renaming archivedTo would silently miss this site.",
+    "recommendation": "Add `archivedTo?: string` to the appropriate warning interface in warnings.ts; drop the cast at start.ts:64.",
+    "evidence": "start.ts:63-65 in applied worker-4."
+  },
+  {
+    "id": "R4-004",
+    "title": "scripts/cycle-e2e-pass.sh dispatches a one-branch case statement (YAGNI)",
+    "severity": "info",
+    "category": "simplicity",
+    "confidence": "medium",
+    "file": "scripts/cycle-e2e-pass.sh",
+    "line_range": "78-110",
+    "description": "The script's scenario-dispatch switch handles only E-008 today. The scaffolding for additional scenarios is in place but no other case is wired up. Standard YAGNI: when there is exactly one case, write it as a flat branch and add the case statement only when a second scenario actually needs distinct handling.",
+    "impact": "Minor — extra structural complexity that doesn't pay for itself yet.",
+    "recommendation": "Collapse to a flat 'if scenario == E-008 then...' branch. Reintroduce the case statement when a second scenario needs distinct skip logic.",
+    "evidence": "scripts/cycle-e2e-pass.sh:78-110 (case dispatch with single E-008 branch)."
+  },
+  {
+    "id": "R4-005",
+    "title": "Content auto.md vs reference.md: structural redundancy is intentional, not over-engineered",
+    "severity": "info",
+    "category": "simplicity",
+    "confidence": "high",
+    "file": "paths/01-orderbook-viewer/rungs/p2-spot-1/auto.md",
+    "line_range": "1-30",
+    "description": "Both auto.md and reference.md contain the same code snippet for each spot. This looks redundant at first glance but is intentional: auto.md is the splice payload (raw code, no markdown frame) used by the engine's auto-write step; reference.md wraps the same code in markdown narrative for human reading. Verified across all 8 new content files. Not a finding; flagging to close out the synthesis-notes' 'review the content packs' carry-forward.",
+    "impact": "None — the separation is correct.",
+    "recommendation": "No action. If a future cycle wants to dedup, the engine could derive auto.md by stripping the markdown frame from reference.md, but that's premature.",
+    "evidence": "All 8 content files at paths/01-orderbook-viewer/rungs/{p2,p3}-spot-1/{hint,reference,auto}.md and phases/{p2,p3}.md."
+  }
+]

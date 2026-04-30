@@ -1,0 +1,24 @@
+{
+  "phases": [
+    {
+      "id": "phase-1-setup",
+      "spots": [
+        { "id": "s1-scaffold", "title": "TBD in cycle 4" },
+        { "id": "s2-connect", "title": "TBD in cycle 4" }
+      ]
+    },
+    {
+      "id": "phase-2-query",
+      "spots": [
+        { "id": "s3-pools", "title": "TBD in cycle 4" },
+        { "id": "s4-orderbook", "title": "TBD in cycle 4" }
+      ]
+    },
+    {
+      "id": "phase-3-display",
+      "spots": [
+        { "id": "s5-render", "title": "TBD in cycle 4" }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,65 @@
+{
+  "phases": [
+    {
+      "id": "p1-bootstrap",
+      "title": "Phase 1: Connect the DeepBook SDK",
+      "explainer_md": "phases/p1-bootstrap.md",
+      "spots": [
+        {
+          "id": "p1-spot-1",
+          "title": "Wire the manifest → SDK config spot",
+          "target_file": "src/App.tsx",
+          "target_range": "39-58",
+          "prompt": "Your task is to implement the three helper functions that translate the deployment manifest into DeepBook SDK configuration objects.\n\nYou are targeting the {{ pool_subset }} pool(s). The functions are:\n- `packageIds(m)` — extract DEEPBOOK_PACKAGE_ID, REGISTRY_ID, DEEP_TREASURY_ID\n- `coinMap(m)` — build the CoinMap for DEEP, SUI, USDC\n- `poolMap(m)` — build the PoolMap for DEEP_SUI and SUI_USDC\n\nImplement these at lines 39-58 of `src/App.tsx` using the manifest shape shown in the Manifest interface above.",
+          "doc_links": [
+            ".sui-docs/develop/transactions/ptbs/inputs-and-results.mdx",
+            ".ts-sdk-docs/sui/clients/grpc.mdx"
+          ],
+          "verification": {
+            "mode": "compile",
+            "command": "pnpm build"
+          },
+          "rungs": {
+            "hint_md": "rungs/p1-spot-1/hint.md",
+            "reference_md": "rungs/p1-spot-1/reference.md",
+            "auto_write_md": "rungs/p1-spot-1/auto.md"
+          }
+        }
+      ]
+    },
+    {
+      "id": "p2-orderbook-polling",
+      "title": "Phase 2: Polling and State (TBD)",
+      "spots": [
+        {
+          "id": "p2-spot-1",
+          "title": "TBD in cycle 5+",
+          "target_file": "src/App.tsx",
+          "target_range": "98-145",
+          "prompt": "TBD in cycle 5+ — this phase covers the real-time polling loop for order book data.",
+          "verification": {
+            "mode": "compile",
+            "command": "pnpm build"
+          }
+        }
+      ]
+    },
+    {
+      "id": "p3-display",
+      "title": "Phase 3: Rendering (TBD)",
+      "spots": [
+        {
+          "id": "p3-spot-1",
+          "title": "TBD in cycle 5+",
+          "target_file": "src/App.tsx",
+          "target_range": "155-219",
+          "prompt": "TBD in cycle 5+ — this phase covers the visual rendering of the order book.",
+          "verification": {
+            "mode": "compile",
+            "command": "pnpm build"
+          }
+        }
+      ]
+    }
+  ]
+}

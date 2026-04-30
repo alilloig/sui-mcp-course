@@ -1,0 +1,93 @@
+[
+  {
+    "id": "R4-001",
+    "title": "verify.ts re-introduces module-level test seam A13 was meant to retire",
+    "severity": "high",
+    "category": "simplicity",
+    "file": "mcp/server/src/verify.ts",
+    "line_range": "35-67",
+    "description": "Cycle-4 carry-forward A13/M005 explicitly retired the module-level setSpawnOverride/spawnOverrides Map in preflight.ts in favor of per-call ProbeOptions.spawn injection. verify.ts then re-implements the exact same anti-pattern under a new name: a module-level let _verifyOverride, an exported setVerifyOverride(fn) that mutates it, and runVerification consults the global before doing anything else. The contract-mandated seam is already present in this file (opts?: VerifyOptions with opts.spawn) and verifySpot.ts could pass a stub through it the same way the harness now passes probe stubs through ProbeOptions. The harness's withVerifyStub fixture (scripts/e2e/harness.ts:167) is the only consumer of setVerifyOverride; it could be rewritten to install the stub through a harness-internal map keyed on the tool, exactly mirroring how withDockerStub/withSuiCliStub were rewritten.",
+    "impact": "The cycle's load-bearing simplicity win — 'no global mutable test seam on the production import surface' — is undone by a parallel global on the very file the new tools depend on. Future contributors will reasonably interpret verify.ts's pattern as endorsed and re-introduce setSpawnOverride-style globals on new modules. The synthesis-notes carry-forward already flags this concern for one of the rejected workers; the chosen winner shipped a cosmetically different but architecturally identical seam.",
+    "recommendation": "Delete _verifyOverride, setVerifyOverride, and the early-return at runVerification:65-67. Have the harness's withVerifyStub install a VerifySpawnFn into a harness-internal map and route verifySpot calls through a callTool branch that injects opts.spawn (parallel to the runPreflightProbe branch at scripts/e2e/harness.ts:70-89). verifySpot's runVerification(verSpec, projectRoot) call would need to accept and forward the opts argument — one extra parameter, no global state.",
+    "evidence": "let _verifyOverride: VerifyOverrideFn | undefined;\n\nexport function setVerifyOverride(fn: VerifyOverrideFn): () => void {\n  _verifyOverride = fn;",
+    "confidence": "high"
+  },
+  {
+    "id": "R4-002",
+    "title": "RegistryWarning union carries 11 kinds vs 8 specified, with three semantic-alias zombies",
+    "severity": "medium",
+    "category": "simplicity",
+    "file": "mcp/server/src/warnings.ts",
+    "line_range": "7-18",
+    "description": "Contract A12 prescribes exactly eight RegistryWarning kinds matching what registry.ts emits: no-paths-dir, empty-paths-dir, missing-path-json, malformed-path-json, invalid-path-json, missing-phases-json, malformed-phases-json, invalid-phases-json. The shipped union has 11 members because three semantic-alias kinds — paths-missing, paths-empty, path-malformed — are kept around 'for tests' (per the comment at warnings.ts:6). registry.ts never emits any of those three; grep confirms zero producers. They exist solely so tests/preflight.test.ts:528-531 (T-171) keeps matching the substring against warnings.ts source bytes. This is a textbook tautology: the test asserts a literal string is in the file, the source carries the string for no other reason, and a reader has to chase the comment chain to discover that 3 of the 11 union members are unreachable at runtime. A future grep for w.kind === 'paths-missing' will find the type but never a producer, and the consumer will silently never branch.",
+    "impact": "Type-narrowing cost: any switch over RegistryWarning.kind has 3 dead arms; exhaustiveness checks pass but read as legitimate handling. The contract's 'true discriminated union' invariant is partially undermined — it's still discriminated, but it covers more cases than registry.ts can produce, defeating one purpose of the tightening (signal the exact wire surface). Either the test should be amended to grep for the canonical eight kinds, or registry.ts should emit the alias kinds (it currently doesn't).",
+    "recommendation": "Pick one: (a) drop the three alias members from the union and update T-171's expectedKinds to the canonical eight, OR (b) document the aliasing as a wire-compat layer with a single comment line and add a test that asserts no registry.ts code path produces the alias kinds. Option (a) is the simpler choice and matches the contract's letter.",
+    "evidence": "// (semantic aliases: paths-missing=no-paths-dir, paths-empty=empty-paths-dir, path-malformed=malformed-path-json)\nexport type RegistryWarning =\n  | { kind: 'no-paths-dir'; message: string; path?: string; dir?: string }\n  | { kind: 'paths-missing'; message: string; path?: string; dir?: string }",
+    "confidence": "high"
+  },
+  {
+    "id": "R4-003",
+    "title": "Personalization range construction duplicated across selectPath and setPersonalization",
+    "severity": "medium",
+    "category": "simplicity",
+    "file": "mcp/server/src/tools/setPersonalization.ts",
+    "line_range": "53-79",
+    "description": "selectPath.ts:24-54 (buildPrompts) and setPersonalization.ts:53-79 (the inline declaredOptions construction) walk pathData.personalization_options identically: same string discrimination on 'poll_interval_ms' / 'pool_subset', same fallback ranges (min: 1000, max: 30000, default: 3000) and (values: ['both', 'DEEP_SUI', 'SUI_USDC'], default: 'both'), same shape produced. Any future personalization key (the spec contemplates 'render_style') requires editing both files in parallel. The hard-coded fallbacks also duplicate path.json's declared block and the schema constants — three copies of the same magic numbers and three copies of the same enum array.",
+    "impact": "Drift hazard: a contributor updating the default poll interval in path.json would still see their app respect 3000 because both tool files carry the same fallback. A new personalization option requires three coordinated edits (selectPath, setPersonalization, schemas/path.ts) when one would suffice. This is exactly the kind of N×M coupling cycle 3 carry-forward R4-004 was filed about for defaultSpawn.",
+    "recommendation": "Extract a single buildDeclaredOptions(pathData: PathData): PersonalizationOptionDecl[] helper (in personalization.ts, alongside validatePersonalizationValues, since it's the inverse of the validation it feeds). selectPath.buildPrompts and setPersonalization both call it. Move the literal fallbacks into one DEFAULT_PERSONALIZATION_RANGES constant — or, better, drop the fallbacks entirely and rely on path.json's required ranges (the schema currently allows them to be absent; tightening the schema removes a phantom code path).",
+    "evidence": "const declaredOptions: PersonalizationOptionDecl[] = [];\n  for (const opt of pathData.personalization_options) {\n    if (opt === 'poll_interval_ms') {\n      const range = pathData.personalization_ranges?.poll_interval_ms ?? {\n        min: 1000,\n        max: 30000,\n        default: 3000,\n      };",
+    "confidence": "high"
+  },
+  {
+    "id": "R4-004",
+    "title": "Personalization API supports two declared-options shapes with a normalize step",
+    "severity": "low",
+    "category": "simplicity",
+    "file": "mcp/server/src/personalization.ts",
+    "line_range": "7-59",
+    "description": "personalization.ts exports three overlapping option-descriptor types — PersonalizationOptionDecl (used by tools), OptionDesc / IntegerOptionDesc / EnumOptionDesc (only used by tests), and a private DeclaredOptions union of the two — plus a normalizeToArray() function whose only job is to reconcile the two shapes. The map shape exists exclusively to match the test fixture in tests/personalization.test.ts:18-25, which chose to declare options as a Record<string, OptionDesc> rather than an array. Production code passes the array form; the map form is never produced by any non-test caller. The result is ~25 lines of branchy normalization code that exists to support a single test's preferred literal layout.",
+    "impact": "Surface-area inflation. Three exported type names that mean almost-the-same-thing complicate IDE autocomplete and code review. A reader of personalization.ts has to scan 30 lines of types and a normalize helper before reaching the actual validation logic.",
+    "recommendation": "Either (a) update tests/personalization.test.ts to use a PersonalizationOptionDecl[] literal — a one-time fixture rewrite — and delete IntegerOptionDesc/EnumOptionDesc/OptionDesc/DeclaredOptions/normalizeToArray, OR (b) pick the map form as canonical and rewrite tools/selectPath.ts and tools/setPersonalization.ts to use it. Either way, one shape, no normalization. (a) is the smaller diff.",
+    "evidence": "// Accept either an array of PersonalizationOptionDecl or a Record<string, OptionDesc>\ntype DeclaredOptions = PersonalizationOptionDecl[] | Record<string, OptionDesc>;\n\nfunction normalizeToArray(declared: DeclaredOptions): PersonalizationOptionDecl[] {",
+    "confidence": "high"
+  },
+  {
+    "id": "R4-005",
+    "title": "advanceCursor uses a stringly-typed __done__ sentinel rather than an optional cursor",
+    "severity": "low",
+    "category": "simplicity",
+    "file": "mcp/server/src/phaseEngine.ts",
+    "line_range": "103-112",
+    "description": "When the cursor advances past the last spot of the last phase, advanceCursor writes the literal '__done__' into both phase_id and spot_id and relies on getCurrentSpot's .find() returning undefined to interpret that as 'done'. This couples the type State.cursor (always {phase_id: string, spot_id: string}) to a magic-string sentinel that exists nowhere in the schema, isn't documented anywhere except a comment, and would silently misbehave if a future curriculum author named a phase '__done__'. The natural representation — make Cursor a discriminated union with a {kind: 'done'} arm, or make phase_id/spot_id optional — is one or two lines longer in the type but eliminates the sentinel and the implicit contract that getCurrentSpot is the only valid reader.",
+    "impact": "Behavioural fragility (a path with id '__done__' would loop forever) and a coupling between two functions through a magic string with no compiler enforcement. Future cycles adding 'jump to phase' or 'rewind' will need to know the sentinel exists and propagate it correctly.",
+    "recommendation": "Either widen Cursor to { phase_id: string; spot_id: string } | { done: true } (the cleanest), or add a top-level state.completed: boolean flag, or document the sentinel as a SENTINEL_DONE_ID constant exported from phaseEngine.ts and reused by all readers. The discriminated-union approach mirrors the LoadStateResult pattern already established in state.ts.",
+    "evidence": "} else {\n    // Past the last spot of the last phase — use a sentinel that getCurrentSpot won't find\n    newPhaseId = '__done__';\n    newSpotId = '__done__';\n  }",
+    "confidence": "medium"
+  },
+  {
+    "id": "R4-006",
+    "title": "Three new tools repeat the same load-state / load-phases / short-circuit boilerplate",
+    "severity": "low",
+    "category": "simplicity",
+    "file": "mcp/server/src/tools/nextSpot.ts",
+    "line_range": "52-73",
+    "description": "tools/nextSpot.ts (52-73), tools/verifySpot.ts (18-39), and tools/setPersonalization.ts (21-34) each begin with the same ~20-line preamble: loadState → corrupt branch → schema-mismatch branch → absent-or-no-selected_path branch → loadPhases (in two of three) → catch-and-stringify error. The error messages are near-identical ('State corrupt: ...', 'State schema mismatch: ...', 'No path selected. Call selectPath first.'). The catch-and-String(err) pattern at nextSpot.ts:71-72 and verifySpot.ts:37-38 even shadows LoadPhasesError's structured slug+reason fields by stringifying the entire Error object — the typed seam exists but no caller uses it.",
+    "impact": "~60 lines of copy-paste across three files. A future contributor adding state-recovery handling will need to remember to update three sites, or one will drift. The LoadPhasesError type carries slug and reason fields that none of the callers extract, which is a silent design smell — the structured error was added to enable richer reporting, but consumers throw away the structure.",
+    "recommendation": "Extract a single helper async function withSelectedPath<T>(projectRoot, fn: (state, phasesData) => Promise<T>): Promise<T | {error: string}> that handles the four short-circuit branches and the LoadPhasesError catch. Each tool collapses to ~5 lines: input validation + delegate to withSelectedPath. Reading LoadPhasesError.slug/reason properly into the warning kind (phase-engine-phases-load-failed already exists in warnings.ts:76-81) closes the unused-typed-fields loop.",
+    "evidence": "  } catch (err) {\n    return { done: false, error: `Failed to load phases: ${String(err)}` };\n  }",
+    "confidence": "medium"
+  },
+  {
+    "id": "R4-007",
+    "title": "verifySpot's verification cast through `as unknown as VerificationSpec` papers over a type seam",
+    "severity": "low",
+    "category": "simplicity",
+    "file": "mcp/server/src/tools/verifySpot.ts",
+    "line_range": "54-58",
+    "description": "verifySpot.ts:56 does a double-cast — `(spot.verification as unknown) as VerificationSpec` — even though spot.verification is already typed as VerificationSpec | undefined in schemas/phases.ts:45 and the `if (spot.verification === undefined)` check on line 50 already narrows the union. The double-cast was added (per synthesis-notes 'Round 1 — TS strict (verifySpot.ts cast)') to silence a strict-mode error, but it points at a type-flow problem rather than fixing it: SpotData.verification is the same VerificationSpec union runVerification consumes, so the cast should be a no-op. The cast survives because the runtime narrowing of `spot.verification === undefined` doesn't propagate through the destructured `current.spot` — TypeScript loses the narrowing across the `const { spot } = current` re-binding.",
+    "impact": "An `as unknown` cast is a load-bearing 'trust me' on the type system. Any future schema change to VerificationSpec (e.g., adding a fifth mode) will silently compile here even if SpotData.verification's type drifts. The cast also encodes an architectural mismatch — runVerification accepts VerificationSpec from schemas/phases.js but verify.ts re-exports it under the same name, creating two import paths to the same type.",
+    "recommendation": "Replace the cast with a plain assignment: `const verSpec = spot.verification;`. If TS still complains (because the narrowing was lost on destructure), restructure to `if (current.spot.verification === undefined) { ... }; const verSpec = current.spot.verification;` — same lines, no cast. Remove the 'cast through unknown' explanatory comment along with it.",
+    "evidence": "// Cast through unknown to satisfy TS strict — spot.verification is a VerificationSpec\n  // as validated by the schema (validatePhases runtime check above)\n  const verSpec = (spot.verification as unknown) as VerificationSpec;",
+    "confidence": "high"
+  }
+]

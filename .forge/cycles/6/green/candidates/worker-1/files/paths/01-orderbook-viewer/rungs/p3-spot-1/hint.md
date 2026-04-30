@@ -1,0 +1,3 @@
+# Hint — Phase 3, Spot 1: Polling Tick
+
+You need a polling loop that fetches the mid-price and level-2 order book ticks from the DeepBook SDK on a fixed interval (configured by `poll_interval_ms`). The standard React pattern is `useEffect` with `setInterval` — set up the interval inside the effect and return a cleanup function that calls `clearInterval` so the loop stops when the component unmounts. To avoid overwhelming the UI with every transient error, track consecutive failure count in a `ref` and only surface an error to the user after 3 consecutive failures, resetting the counter on each success.

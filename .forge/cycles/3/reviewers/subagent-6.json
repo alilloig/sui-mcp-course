@@ -1,0 +1,41 @@
+[
+  {
+    "id": "R6-001",
+    "title": "setSpawnOverride exports a mutable global probe-spawn registry",
+    "severity": "low",
+    "category": "security",
+    "file": "mcp/server/src/preflight.ts",
+    "line_range": "75-86",
+    "description": "preflight.ts maintains a module-level mutable Map of spawn overrides keyed by probe id, and exports a public function setSpawnOverride that any caller in the same import graph can use to swap the spawn implementation of any probe at runtime. This is a test-only seam (used by scripts/e2e/harness.ts withDockerStub / withSuiCliStub fixtures) but it is not gated behind NODE_ENV, a test-only build, or a private symbol — it is part of the production export surface the MCP server ships.",
+    "impact": "No exploit path from the MCP boundary today: neither tool handler (start, runPreflightProbe) calls setSpawnOverride, and the registered Zod schemas don't accept an injectable spawn fn. Risk is forward-looking: any future tool, plugin, or third-party importer in the same runtime can poison probes #1/#3/#4 (the three spawn-driven probes) into reporting fake passes, undermining AC-2.4's hard-stop guarantee. Mirrors the synthesis-notes concern that workers must not leak test-API into production.",
+    "recommendation": "Either (a) move the override Map and setSpawnOverride into a separate test-helpers module that is imported only from scripts/e2e/harness.ts and tests/, never from mcp/server/src/index.ts's transitive graph; or (b) gate the override on process.env.NODE_ENV === 'test' so it is a no-op in production stdio runs; or (c) keep the unit-test injection seam (opts.spawn parameter) and remove the module-level Map entirely, having the harness pass the spawn fn through a fixture-provided ProbeOptions instead.",
+    "evidence": "const spawnOverrides = new Map<ProbeId, SpawnFn>();\n\nexport function setSpawnOverride(probeId: ProbeId, spawnFn: SpawnFn): () => void {\n  spawnOverrides.set(probeId, spawnFn);",
+    "confidence": "high"
+  },
+  {
+    "id": "R6-002",
+    "title": "runProbe registry lookup uses bracket access without hasOwnProperty guard",
+    "severity": "info",
+    "category": "security",
+    "file": "mcp/server/src/preflight.ts",
+    "line_range": "92-96",
+    "description": "runProbe does PROBE_REGISTRY[probeId as ProbeId] with only a falsy guard (if (!probe)). Because PROBE_REGISTRY is a plain object literal, lookups for inherited keys like 'constructor' resolve to Object (truthy) and 'toString' resolves to Object.prototype.toString (truthy callable). The if (!probe) guard does not detect these. The tool layer (runPreflightProbe.ts line 25) does pre-validate with PROBE_ORDER.includes(probeId), so the MCP-facing surface is safe — but runProbe is exported and any in-process importer that bypasses the tool can reach this state.",
+    "impact": "Not exploitable across the MCP trust boundary today. Calling runProbe('constructor', {}) in-process invokes Object as a function, returning a wrapped opts object that flows to the caller as a malformed ProbeResult ({ pass: undefined, message: undefined, action: undefined }). Calling runProbe('toString', {}) succeeds and returns a string, which downstream would treat as a non-result. No authorization bypass, no shell action emission.",
+    "recommendation": "Tighten the lookup to Object.prototype.hasOwnProperty.call(PROBE_REGISTRY, probeId) (or use a Map<ProbeId, ProbeFn> instead of an object literal) so the runProbe contract holds for direct callers, not just for callers that go through the tool's PROBE_ORDER.includes guard.",
+    "evidence": "const probe = PROBE_REGISTRY[probeId as ProbeId];\n  if (!probe) {\n    throw new Error(`Unknown probe id: '${String(probeId)}'...",
+    "confidence": "high"
+  },
+  {
+    "id": "R6-003",
+    "title": "Real-mode deploy timeout leaks the tool call when child ignores SIGTERM",
+    "severity": "low",
+    "category": "security",
+    "file": "mcp/server/src/probes/manifest.ts",
+    "line_range": "129-145",
+    "description": "On the 7-minute timeout, the executor sets timedOut = true and calls child.kill() (default SIGTERM). The Promise only resolves inside child.on('close', ...). If the spawned process (pnpm → docker compose chain) ignores SIGTERM — which docker compose subprocesses can during slow image pulls or hung containers — child.on('close') never fires, the timeout warning is never delivered, and the tool call hangs the MCP request indefinitely.",
+    "impact": "Not a confidentiality/integrity issue — the deploy command itself is hardcoded and the cwd is constructed from os.homedir(). The concrete failure mode is availability: a malicious or merely buggy local environment (a docker daemon hung mid-pull) lets the tool call sit forever, holding the MCP connection. Surfaces as 'never returns' rather than the contract-specified preflight-deploy-timeout warning, weakening A16's promise.",
+    "recommendation": "After child.kill(), schedule a second setTimeout (e.g. 10s grace) that escalates to child.kill('SIGKILL') and resolves the promise with the timeout warning unconditionally — even if 'close' never fires — so the MCP response is always produced within DEPLOY_TIMEOUT_MS + grace.",
+    "evidence": "const timeoutHandle = setTimeout(() => {\n      timedOut = true;\n      child.kill();\n    }, DEPLOY_TIMEOUT_MS);",
+    "confidence": "high"
+  }
+]

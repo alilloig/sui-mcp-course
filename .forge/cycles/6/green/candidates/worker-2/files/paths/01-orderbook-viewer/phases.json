@@ -1,0 +1,84 @@
+{
+  "phases": [
+    {
+      "id": "p1-bootstrap",
+      "title": "Phase 1 — Manifest → SDK Config",
+      "explainer_md": "phases/p1-bootstrap.md",
+      "spots": [
+        {
+          "id": "p1-spot-1",
+          "title": "Wire the deployment manifest to the DeepBook SDK client",
+          "target_file": "src/App.tsx",
+          "target_range": "39-58",
+          "prompt": "The deployment manifest has been fetched. Now you need to wire it into the DeepBook SDK client.\n\nYour task: implement the three helper functions (`packageIds`, `coinMap`, `poolMap`) that extract the SDK configuration from the manifest, then build the `SuiGrpcClient` and attach the `deepbook` extension.\n\nYou are configuring for pool: {{ pool_subset }}.\n\nLines 39–58 of `src/App.tsx` are the target. Use `packageIds(manifest)`, `coinMap(manifest)`, and `poolMap(manifest)` as arguments to the `deepbook(...)` call.",
+          "verification": {
+            "mode": "compile",
+            "command": "pnpm build"
+          },
+          "rungs": {
+            "hint_md": "rungs/p1-spot-1/hint.md",
+            "reference_md": "rungs/p1-spot-1/reference.md",
+            "auto_write_md": "rungs/p1-spot-1/auto.md"
+          },
+          "doc_links": [
+            ".sui-docs/develop/transactions/ptbs/inputs-and-results.mdx",
+            ".ts-sdk-docs/sui/clients/grpc.mdx"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "p2-retry",
+      "title": "Phase 2 — Resilient gRPC simulation calls",
+      "explainer_md": "phases/p2.md",
+      "spots": [
+        {
+          "id": "p2-spot-1",
+          "title": "Wrap SDK calls with withRetry for resilience",
+          "target_file": "src/App.tsx",
+          "target_range": "103-114",
+          "prompt": "The DeepBook gRPC simulation calls can fail transiently. Implement the `withRetry` helper that wraps an async call and retries up to a configurable number of times before propagating the error.\n\nLines 103–114 of `src/App.tsx` are the target. The helper must retry on any thrown error and surface the last error after all attempts are exhausted.",
+          "verification": {
+            "mode": "compile",
+            "command": "pnpm build"
+          },
+          "rungs": {
+            "hint_md": "rungs/p2-spot-1/hint.md",
+            "reference_md": "rungs/p2-spot-1/reference.md",
+            "auto_write_md": "rungs/p2-spot-1/auto.md"
+          },
+          "doc_links": [
+            ".ts-sdk-docs/sui/clients/grpc.mdx"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "p3-poll",
+      "title": "Phase 3 — Polling loop with failure tolerance",
+      "explainer_md": "phases/p3.md",
+      "spots": [
+        {
+          "id": "p3-spot-1",
+          "title": "Implement the polling tick with consecutive-failure tolerance",
+          "target_file": "src/App.tsx",
+          "target_range": "116-145",
+          "prompt": "Implement the polling tick: midPrice + getLevel2TicksFromMid every {{ poll_interval_ms }} ms; surface error only after 3 consecutive failures.\n\nLines 116–145 of `src/App.tsx` are the target. Use `setInterval` with `{{ poll_interval_ms }}` as the interval. Track consecutive failures in a counter — only surface the error to the UI state after 3 consecutive failures. Reset the counter on each successful poll.",
+          "verification": {
+            "mode": "simulate",
+            "endpoint": "http://localhost:9009/manifest",
+            "expected_status": 200
+          },
+          "rungs": {
+            "hint_md": "rungs/p3-spot-1/hint.md",
+            "reference_md": "rungs/p3-spot-1/reference.md",
+            "auto_write_md": "rungs/p3-spot-1/auto.md"
+          },
+          "doc_links": [
+            ".sui-docs/develop/accessing-data/grpc/using-grpc.mdx"
+          ]
+        }
+      ]
+    }
+  ]
+}

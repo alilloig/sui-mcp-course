@@ -1,0 +1,1019 @@
+[
+  {
+    "id": "T-179",
+    "name": "registerTools registers exactly six tools: start, runPreflightProbe, selectPath, setPersonalization, nextSpot, verifySpot",
+    "behavior": "import { registerTools } from index.ts; pass a stub server whose .tool(name,...) records every call; after registerTools(stub), the recorded set sorted equals ['nextSpot','runPreflightProbe','selectPath','setPersonalization','start','verifySpot'] (length === 6); no other tool name is registered",
+    "kind": "unit",
+    "target_file": "mcp/server/src/index.ts",
+    "test_file": "tests/harness.lesson.test.ts",
+    "covers_contract_requirement": "A1"
+  },
+  {
+    "id": "T-180",
+    "name": "exactly six handler files exist under mcp/server/src/tools/",
+    "behavior": "fs.readdirSync('mcp/server/src/tools/') filtering for .ts files; resulting basenames sorted equal ['nextSpot.ts','runPreflightProbe.ts','selectPath.ts','setPersonalization.ts','start.ts','verifySpot.ts']; length === 6 (no orphan tool handlers)",
+    "kind": "unit",
+    "target_file": "mcp/server/src/index.ts",
+    "test_file": "tests/harness.lesson.test.ts",
+    "covers_contract_requirement": "A1"
+  },
+  {
+    "id": "T-181",
+    "name": "validatePhases rejects phases.json with zero phases",
+    "behavior": "validatePhases({ phases: [] }) → { ok: false, error: matches /at least one phase/i }; the schema must keep the cycle-1 invariant — no relaxation allowed in cycle 4",
+    "kind": "unit",
+    "target_file": "mcp/server/src/schemas/phases.ts",
+    "test_file": "tests/phaseEngine.test.ts",
+    "covers_contract_requirement": "A2"
+  },
+  {
+    "id": "T-182",
+    "name": "validatePhases rejects a phase whose spots array is empty (names the offending phase id)",
+    "behavior": "validatePhases({ phases: [{ id: 'p1', spots: [] }] }) → { ok: false, error: containing the substrings 'spots' and 'p1' }; the AC-4.1 invariant from cycle 1 must remain green",
+    "kind": "unit",
+    "target_file": "mcp/server/src/schemas/phases.ts",
+    "test_file": "tests/phaseEngine.test.ts",
+    "covers_contract_requirement": "A2"
+  },
+  {
+    "id": "T-183",
+    "name": "validatePhases requires each spot to declare target_file as a string",
+    "behavior": "validatePhases with a phase whose spot omits target_file (or sets it non-string) → { ok: false, error: matches /target_file/ }; cycle-4 schema tightening",
+    "kind": "unit",
+    "target_file": "mcp/server/src/schemas/phases.ts",
+    "test_file": "tests/phaseEngine.test.ts",
+    "covers_contract_requirement": "A2"
+  },
+  {
+    "id": "T-184",
+    "name": "validatePhases requires each spot to declare target_range as a string",
+    "behavior": "validatePhases with a spot missing target_range → { ok: false, error: matches /target_range/ }",
+    "kind": "unit",
+    "target_file": "mcp/server/src/schemas/phases.ts",
+    "test_file": "tests/phaseEngine.test.ts",
+    "covers_contract_requirement": "A2"
+  },
+  {
+    "id": "T-185",
+    "name": "validatePhases requires each spot to declare prompt as a string",
+    "behavior": "validatePhases with a spot missing prompt → { ok: false, error: matches /prompt/ }",
+    "kind": "unit",
+    "target_file": "mcp/server/src/schemas/phases.ts",
+    "test_file": "tests/phaseEngine.test.ts",
+    "covers_contract_requirement": "A2"
+  },
+  {
+    "id": "T-186",
+    "name": "validatePhases requires verification.mode to be one of compile|test|simulate|custom",
+    "behavior": "for a spot with verification: { mode: 'unknown', command: 'x' } → { ok: false, error: matches /verification.*mode/i }; for each of the four valid modes the schema accepts (when the mode-specific fields are present)",
+    "kind": "unit",
+    "target_file": "mcp/server/src/schemas/phases.ts",
+    "test_file": "tests/phaseEngine.test.ts",
+    "covers_contract_requirement": "A2"
+  },
+  {
+    "id": "T-187",
+    "name": "validatePhases requires verification.command for compile mode",
+    "behavior": "validatePhases with a spot { verification: { mode: 'compile' } } (no command) → { ok: false, error: matches /command/ }",
+    "kind": "unit",
+    "target_file": "mcp/server/src/schemas/phases.ts",
+    "test_file": "tests/phaseEngine.test.ts",
+    "covers_contract_requirement": "A2"
+  },
+  {
+    "id": "T-188",
+    "name": "validatePhases requires endpoint+expected_status for simulate mode",
+    "behavior": "validatePhases with verification: { mode: 'simulate' } missing fields → { ok: false }; with { mode: 'simulate', endpoint: 'http://x', expected_status: 200 } → { ok: true }",
+    "kind": "unit",
+    "target_file": "mcp/server/src/schemas/phases.ts",
+    "test_file": "tests/phaseEngine.test.ts",
+    "covers_contract_requirement": "A2"
+  },
+  {
+    "id": "T-189",
+    "name": "validatePhases requires expected_stdout_regex for custom mode",
+    "behavior": "validatePhases with verification: { mode: 'custom', command: 'x' } missing expected_stdout_regex → { ok: false, error: matches /expected_stdout_regex/ }",
+    "kind": "unit",
+    "target_file": "mcp/server/src/schemas/phases.ts",
+    "test_file": "tests/phaseEngine.test.ts",
+    "covers_contract_requirement": "A2"
+  },
+  {
+    "id": "T-190",
+    "name": "validatePhases when rungs are present requires hint_md, reference_md, auto_write_md as strings",
+    "behavior": "validatePhases with a spot whose rungs is { hint_md: 'a.md' } (missing the other two) → { ok: false, error: matches /reference_md|auto_write_md/ }; full triple → { ok: true }",
+    "kind": "unit",
+    "target_file": "mcp/server/src/schemas/phases.ts",
+    "test_file": "tests/phaseEngine.test.ts",
+    "covers_contract_requirement": "A2"
+  },
+  {
+    "id": "T-191",
+    "name": "loadPhases reads and validates paths/<slug>/phases.json from projectRoot",
+    "behavior": "fixture: tests/fixtures/cycle4/paths/01-orderbook-viewer/phases.json with a fully-populated phase 1 and stub phases 2/3; await loadPhases(projectRoot, '01-orderbook-viewer') resolves to a PhasesData object whose phases.length === 3 and phases[0].id === 'p1-bootstrap'",
+    "kind": "unit",
+    "target_file": "mcp/server/src/phaseEngine.ts",
+    "test_file": "tests/phaseEngine.test.ts",
+    "covers_contract_requirement": "A4"
+  },
+  {
+    "id": "T-192",
+    "name": "loadPhases throws LoadPhasesError when phases.json is missing for the slug",
+    "behavior": "projectRoot has paths/01-orderbook-viewer/path.json but NO phases.json; await expect(loadPhases(root, '01-orderbook-viewer')).rejects.toBeInstanceOf(LoadPhasesError); error.slug === '01-orderbook-viewer' or message references it",
+    "kind": "unit",
+    "target_file": "mcp/server/src/phaseEngine.ts",
+    "test_file": "tests/phaseEngine.test.ts",
+    "covers_contract_requirement": "A4"
+  },
+  {
+    "id": "T-193",
+    "name": "loadPhases throws LoadPhasesError when phases.json is malformed JSON",
+    "behavior": "fixture: phases.json with bytes '{ not json'; await expect(loadPhases(root, slug)).rejects.toBeInstanceOf(LoadPhasesError); error.message references parse failure",
+    "kind": "unit",
+    "target_file": "mcp/server/src/phaseEngine.ts",
+    "test_file": "tests/phaseEngine.test.ts",
+    "covers_contract_requirement": "A4"
+  },
+  {
+    "id": "T-194",
+    "name": "loadPhases throws LoadPhasesError when phases.json is JSON-valid but schema-invalid (zero spots in a phase)",
+    "behavior": "fixture: phases.json with phases: [{ id: 'p1', spots: [] }]; loadPhases rejects with LoadPhasesError; error.message includes 'spots' (the cycle-1 invariant fires through the runtime path too)",
+    "kind": "unit",
+    "target_file": "mcp/server/src/phaseEngine.ts",
+    "test_file": "tests/phaseEngine.test.ts",
+    "covers_contract_requirement": "A2"
+  },
+  {
+    "id": "T-195",
+    "name": "getCurrentSpot returns the resolved phase + spot for a state.cursor pointing inside the manifest",
+    "behavior": "given phasesData with phases [p1: [s1,s2], p2: [s3]] and state.cursor = { phase_id: 'p1', spot_id: 's2' }; getCurrentSpot(state, phases) returns { phase: <p1>, spot: <s2> } (no done flag)",
+    "kind": "unit",
+    "target_file": "mcp/server/src/phaseEngine.ts",
+    "test_file": "tests/phaseEngine.test.ts",
+    "covers_contract_requirement": "A4"
+  },
+  {
+    "id": "T-196",
+    "name": "getCurrentSpot returns { done: true } when state.cursor names a phase_id absent from the manifest",
+    "behavior": "phases [p1:[s1]]; state.cursor = { phase_id: 'p9', spot_id: 'sX' }; getCurrentSpot returns { done: true } (cursor walked off the end)",
+    "kind": "unit",
+    "target_file": "mcp/server/src/phaseEngine.ts",
+    "test_file": "tests/phaseEngine.test.ts",
+    "covers_contract_requirement": "A4"
+  },
+  {
+    "id": "T-197",
+    "name": "advanceCursor moves to the next spot within the same phase",
+    "behavior": "phases [p1:[s1,s2]]; state.cursor = { phase_id: 'p1', spot_id: 's1' }; advanceCursor returns a new state whose cursor is { phase_id: 'p1', spot_id: 's2' }; original state object is not mutated (immutability check via Object.is(original.cursor, advanced.cursor) === false)",
+    "kind": "unit",
+    "target_file": "mcp/server/src/phaseEngine.ts",
+    "test_file": "tests/phaseEngine.test.ts",
+    "covers_contract_requirement": "A4"
+  },
+  {
+    "id": "T-198",
+    "name": "advanceCursor crosses a phase boundary onto the first spot of the next phase",
+    "behavior": "phases [p1:[s1], p2:[s3,s4]]; state.cursor = { phase_id: 'p1', spot_id: 's1' }; advanceCursor returns state with cursor { phase_id: 'p2', spot_id: 's3' }",
+    "kind": "unit",
+    "target_file": "mcp/server/src/phaseEngine.ts",
+    "test_file": "tests/phaseEngine.test.ts",
+    "covers_contract_requirement": "A4"
+  },
+  {
+    "id": "T-199",
+    "name": "advanceCursor on the last spot of the last phase moves the cursor into a done-marked state",
+    "behavior": "phases [p1:[s1], p2:[s2]]; state.cursor = { phase_id: 'p2', spot_id: 's2' }; let advanced = advanceCursor(state, phases); getCurrentSpot(advanced, phases) returns { done: true }",
+    "kind": "unit",
+    "target_file": "mcp/server/src/phaseEngine.ts",
+    "test_file": "tests/phaseEngine.test.ts",
+    "covers_contract_requirement": "A4"
+  },
+  {
+    "id": "T-200",
+    "name": "advanceCursor throws when called past the end (already done)",
+    "behavior": "let s = advanceCursor twice past the last spot; expect(() => advanceCursor(s, phases)).toThrow(/done|past.*end/i)",
+    "kind": "unit",
+    "target_file": "mcp/server/src/phaseEngine.ts",
+    "test_file": "tests/phaseEngine.test.ts",
+    "covers_contract_requirement": "A4"
+  },
+  {
+    "id": "T-201",
+    "name": "validatePersonalizationValues accepts in-range integer values for poll_interval_ms",
+    "behavior": "for v in [1000, 3000, 15000, 30000]: validatePersonalizationValues({ poll_interval_ms: v }, declaredOptions) returns { ok: true, values: { poll_interval_ms: v } }; declaredOptions = path.json's personalization_options + ranges",
+    "kind": "unit",
+    "target_file": "mcp/server/src/personalization.ts",
+    "test_file": "tests/personalization.test.ts",
+    "covers_contract_requirement": "A5"
+  },
+  {
+    "id": "T-202",
+    "name": "validatePersonalizationValues rejects out-of-range poll_interval_ms (below min)",
+    "behavior": "validatePersonalizationValues({ poll_interval_ms: 999 }, declared) → { ok: false, errors: [matches /poll_interval_ms.*1000|range/] }; lower bound is exclusive of 999",
+    "kind": "unit",
+    "target_file": "mcp/server/src/personalization.ts",
+    "test_file": "tests/personalization.test.ts",
+    "covers_contract_requirement": "A5"
+  },
+  {
+    "id": "T-203",
+    "name": "validatePersonalizationValues rejects out-of-range poll_interval_ms (above max)",
+    "behavior": "validatePersonalizationValues({ poll_interval_ms: 30001 }, declared) → { ok: false, errors: [matches /poll_interval_ms.*30000|range/] }",
+    "kind": "unit",
+    "target_file": "mcp/server/src/personalization.ts",
+    "test_file": "tests/personalization.test.ts",
+    "covers_contract_requirement": "A5"
+  },
+  {
+    "id": "T-204",
+    "name": "validatePersonalizationValues rejects wrong-type poll_interval_ms (string)",
+    "behavior": "validatePersonalizationValues({ poll_interval_ms: '3000' }, declared) → { ok: false, errors: [matches /integer|number|type/] }",
+    "kind": "unit",
+    "target_file": "mcp/server/src/personalization.ts",
+    "test_file": "tests/personalization.test.ts",
+    "covers_contract_requirement": "A5"
+  },
+  {
+    "id": "T-205",
+    "name": "validatePersonalizationValues accepts each enum value of pool_subset",
+    "behavior": "for v in ['both', 'DEEP_SUI', 'SUI_USDC']: validatePersonalizationValues({ pool_subset: v }, declared) → { ok: true, values: { pool_subset: v } }",
+    "kind": "unit",
+    "target_file": "mcp/server/src/personalization.ts",
+    "test_file": "tests/personalization.test.ts",
+    "covers_contract_requirement": "A5"
+  },
+  {
+    "id": "T-206",
+    "name": "validatePersonalizationValues rejects pool_subset not in the enum",
+    "behavior": "validatePersonalizationValues({ pool_subset: 'BTC_USDC' }, declared) → { ok: false, errors: [matches /pool_subset|enum/] }",
+    "kind": "unit",
+    "target_file": "mcp/server/src/personalization.ts",
+    "test_file": "tests/personalization.test.ts",
+    "covers_contract_requirement": "A5"
+  },
+  {
+    "id": "T-207",
+    "name": "validatePersonalizationValues rejects unknown keys",
+    "behavior": "validatePersonalizationValues({ render_style: 'pretty' }, declared) → { ok: false, errors: [matches /render_style|unknown/] }; the cycle-4 declared options for orderbook-viewer are exactly poll_interval_ms + pool_subset",
+    "kind": "unit",
+    "target_file": "mcp/server/src/personalization.ts",
+    "test_file": "tests/personalization.test.ts",
+    "covers_contract_requirement": "A5"
+  },
+  {
+    "id": "T-208",
+    "name": "validatePersonalizationValues accepts an empty object (Use defaults path)",
+    "behavior": "validatePersonalizationValues({}, declared) → { ok: true, values: {} } (the caller is responsible for merging defaults; validator does not synthesize them, only signs off on absence-as-valid)",
+    "kind": "unit",
+    "target_file": "mcp/server/src/personalization.ts",
+    "test_file": "tests/personalization.test.ts",
+    "covers_contract_requirement": "A6"
+  },
+  {
+    "id": "T-209",
+    "name": "substitutePromptOnly resolves {{ poll_interval_ms }} (with whitespace) using state.personalization values",
+    "behavior": "substitutePromptOnly('Poll every {{ poll_interval_ms }} ms', { poll_interval_ms: 3000, pool_subset: 'both' }) === 'Poll every 3000 ms'",
+    "kind": "unit",
+    "target_file": "mcp/server/src/personalization.ts",
+    "test_file": "tests/personalization.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-210",
+    "name": "substitutePromptOnly resolves {{key}} without whitespace",
+    "behavior": "substitutePromptOnly('Wire {{pool_subset}}', { pool_subset: 'DEEP_SUI', poll_interval_ms: 3000 }) === 'Wire DEEP_SUI'",
+    "kind": "unit",
+    "target_file": "mcp/server/src/personalization.ts",
+    "test_file": "tests/personalization.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-211",
+    "name": "substitutePromptOnly leaves unknown placeholders intact",
+    "behavior": "substitutePromptOnly('Foo {{ unknown_key }} bar', { poll_interval_ms: 3000, pool_subset: 'both' }) === 'Foo {{ unknown_key }} bar' (no substitution and no throw); the substituted output is not undefined-strings",
+    "kind": "unit",
+    "target_file": "mcp/server/src/personalization.ts",
+    "test_file": "tests/personalization.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-212",
+    "name": "substitutePromptOnly resolves multiple distinct placeholders in one pass",
+    "behavior": "substitutePromptOnly('Poll {{ poll_interval_ms }}ms, wire {{ pool_subset }}', { poll_interval_ms: 5000, pool_subset: 'DEEP_SUI' }) === 'Poll 5000ms, wire DEEP_SUI'",
+    "kind": "unit",
+    "target_file": "mcp/server/src/personalization.ts",
+    "test_file": "tests/personalization.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-213",
+    "name": "substitutePromptOnly is a no-op on a string with zero placeholders",
+    "behavior": "substitutePromptOnly('plain text src/App.tsx 39-58', { poll_interval_ms: 3000, pool_subset: 'both' }) === 'plain text src/App.tsx 39-58' (byte-for-byte equal)",
+    "kind": "unit",
+    "target_file": "mcp/server/src/personalization.ts",
+    "test_file": "tests/personalization.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-214",
+    "name": "substitutePromptOnly is the only substitution surface — engine source contains zero {{...}} placeholders outside personalization.ts and tests/",
+    "behavior": "fs walk mcp/server/src/ recursively skipping personalization.ts; for each .ts file, regex /\\{\\{\\s*[a-zA-Z_]/ must match in zero files; offenders array is empty",
+    "kind": "unit",
+    "target_file": "mcp/server/src/personalization.ts",
+    "test_file": "tests/personalization.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-215",
+    "name": "no engine caller passes target_file/target_range/verification.command/verification.endpoint through substitutePromptOnly",
+    "behavior": "fs walk mcp/server/src/ excluding personalization.ts; for each .ts file scan every call to substitutePromptOnly( and assert that within ~80 chars of that call site the literals 'target_file', 'target_range', 'verification.command', 'verification.endpoint' do NOT appear (cycle 4 reviewer grep proxy); offenders empty",
+    "kind": "unit",
+    "target_file": "mcp/server/src/personalization.ts",
+    "test_file": "tests/personalization.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-216",
+    "name": "runVerification compile mode: spawns the spot's command with cwd=projectRoot and returns { pass: true } on exit 0",
+    "behavior": "stub spawn returns { status: 0, stdout: 'built', stderr: '' }; await runVerification({ mode: 'compile', command: 'pnpm build' }, '/tmp/proj', { spawn: stub }); stub was called once with cmd === 'pnpm', args[0] === 'build', opts.cwd === '/tmp/proj'; result === { pass: true, output: containing 'built' }",
+    "kind": "unit",
+    "target_file": "mcp/server/src/verify.ts",
+    "test_file": "tests/verify.test.ts",
+    "covers_contract_requirement": "A8"
+  },
+  {
+    "id": "T-217",
+    "name": "runVerification compile mode: returns { pass: false } on non-zero exit and surfaces stdout+stderr",
+    "behavior": "stub spawn returns { status: 1, stdout: 'X', stderr: 'syntax error' }; result.pass === false; result.output contains both 'X' and 'syntax error'",
+    "kind": "unit",
+    "target_file": "mcp/server/src/verify.ts",
+    "test_file": "tests/verify.test.ts",
+    "covers_contract_requirement": "A8"
+  },
+  {
+    "id": "T-218",
+    "name": "runVerification compile mode: spawn-rejection (ENOENT) surfaces as pass:false with the error message in output",
+    "behavior": "stub spawn raises an Error with code 'ENOENT'; await runVerification(...); result.pass === false; result.output contains 'ENOENT' (or the error message); does NOT throw",
+    "kind": "unit",
+    "target_file": "mcp/server/src/verify.ts",
+    "test_file": "tests/verify.test.ts",
+    "covers_contract_requirement": "A8"
+  },
+  {
+    "id": "T-219",
+    "name": "runVerification compile splits 'pnpm build' into cmd='pnpm', args=['build']",
+    "behavior": "stub captures the call; await runVerification({ mode: 'compile', command: 'pnpm build' }, root, { spawn: stub }); stub.mock.calls[0][0] === 'pnpm'; stub.mock.calls[0][1] equals ['build']",
+    "kind": "unit",
+    "target_file": "mcp/server/src/verify.ts",
+    "test_file": "tests/verify.test.ts",
+    "covers_contract_requirement": "A8"
+  },
+  {
+    "id": "T-220",
+    "name": "runVerification test mode throws VerificationModeUnsupportedError",
+    "behavior": "await expect(runVerification({ mode: 'test', command: 'pnpm test' }, root)).rejects.toBeInstanceOf(VerificationModeUnsupportedError); err.mode === 'test' OR err.message contains 'test'",
+    "kind": "unit",
+    "target_file": "mcp/server/src/verify.ts",
+    "test_file": "tests/verify.test.ts",
+    "covers_contract_requirement": "A8"
+  },
+  {
+    "id": "T-221",
+    "name": "runVerification simulate mode throws VerificationModeUnsupportedError",
+    "behavior": "await expect(runVerification({ mode: 'simulate', endpoint: 'http://x/manifest', expected_status: 200 }, root)).rejects.toBeInstanceOf(VerificationModeUnsupportedError); err.message references 'simulate'",
+    "kind": "unit",
+    "target_file": "mcp/server/src/verify.ts",
+    "test_file": "tests/verify.test.ts",
+    "covers_contract_requirement": "A8"
+  },
+  {
+    "id": "T-222",
+    "name": "runVerification custom mode throws VerificationModeUnsupportedError",
+    "behavior": "await expect(runVerification({ mode: 'custom', command: 'echo x', expected_stdout_regex: '^x' }, root)).rejects.toBeInstanceOf(VerificationModeUnsupportedError); err.message references 'custom'",
+    "kind": "unit",
+    "target_file": "mcp/server/src/verify.ts",
+    "test_file": "tests/verify.test.ts",
+    "covers_contract_requirement": "A8"
+  },
+  {
+    "id": "T-223",
+    "name": "verify.ts contains exactly one spawn-invoking branch (the compile adapter)",
+    "behavior": "fs.readFileSync mcp/server/src/verify.ts; count occurrences of /\\bspawn\\s*\\(/g and /opts\\.spawn\\s*\\(/g and similar; assert at most one production call site outside guards/types; documents that test/simulate/custom must not call spawn in cycle 4",
+    "kind": "unit",
+    "target_file": "mcp/server/src/verify.ts",
+    "test_file": "tests/verify.test.ts",
+    "covers_contract_requirement": "A8"
+  },
+  {
+    "id": "T-224",
+    "name": "reference/App.tsx is byte-for-byte equal to ~/workspace/deepbook-sandbox-evaluation-apps/01-orderbook-viewer/src/App.tsx (SHA-256)",
+    "behavior": "if fs.existsSync(<HOME>/workspace/deepbook-sandbox-evaluation-apps/01-orderbook-viewer/src/App.tsx): hash both via crypto.createHash('sha256').update(fs.readFileSync(...)).digest('hex'); assert hashes equal AND byte length equal. Else: console.warn skip with 'source unavailable'",
+    "kind": "unit",
+    "target_file": "paths/01-orderbook-viewer/reference/App.tsx",
+    "test_file": "tests/phaseEngine.test.ts",
+    "covers_contract_requirement": "A9"
+  },
+  {
+    "id": "T-225",
+    "name": "reference/App.tsx exists and has size > 0 unconditionally",
+    "behavior": "fs.statSync('paths/01-orderbook-viewer/reference/App.tsx').size > 0; the bundled snapshot must always be present in the repo (the source-fidelity hash is conditional, this existence assertion is not)",
+    "kind": "unit",
+    "target_file": "paths/01-orderbook-viewer/reference/App.tsx",
+    "test_file": "tests/phaseEngine.test.ts",
+    "covers_contract_requirement": "A9"
+  },
+  {
+    "id": "T-226",
+    "name": "selectPath happy path: valid slug returns ok with personalizationPrompts and initializes state",
+    "behavior": "vi.mock state.saveState as a spy; await selectPath({ projectRoot, slug: '01-orderbook-viewer' }) → { ok: true, personalizationPrompts: array.length === 2, errors: undefined }; saveState was called once with state.selected_path === '01-orderbook-viewer', state.cursor === { phase_id: 'p1-bootstrap', spot_id: 'p1-spot-1' }, state.ladder === {}",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/selectPath.ts",
+    "test_file": "tests/selectPath.test.ts",
+    "covers_contract_requirement": "A5"
+  },
+  {
+    "id": "T-227",
+    "name": "selectPath returns enumerable personalizationPrompts (integer + enum, no free text)",
+    "behavior": "result.personalizationPrompts: array of 2 entries; one entry has name='poll_interval_ms', type='integer', range: { min: 1000, max: 30000, default: 3000 }; the other has name='pool_subset', type='enum', enum: ['both','DEEP_SUI','SUI_USDC'], default: 'both'; no entry has type === 'string' or unbounded",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/selectPath.ts",
+    "test_file": "tests/selectPath.test.ts",
+    "covers_contract_requirement": "A5"
+  },
+  {
+    "id": "T-228",
+    "name": "selectPath rejects an unknown slug with ok:false and no state mutation",
+    "behavior": "vi.mock state.saveState as a spy; await selectPath({ projectRoot, slug: '99-fake' }) → { ok: false, errors: [string] }; saveState was NOT called; the temp project root has zero new files written (snapshot equality before/after)",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/selectPath.ts",
+    "test_file": "tests/selectPath.test.ts",
+    "covers_contract_requirement": "A11"
+  },
+  {
+    "id": "T-229",
+    "name": "selectPath emits no shell action",
+    "behavior": "result of any selectPath call (valid or invalid slug) — deepFindShellKind(result) === false; AND the source file mcp/server/src/tools/selectPath.ts contains zero matches of /kind\\s*:\\s*['\\\"]shell['\\\"]/",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/selectPath.ts",
+    "test_file": "tests/selectPath.test.ts",
+    "covers_contract_requirement": "A11"
+  },
+  {
+    "id": "T-230",
+    "name": "selectPath input validation rejects missing slug with structured error (no throw)",
+    "behavior": "await selectPath({ projectRoot } as any) — resolves to { ok: false, errors: [matching /slug/i] }; does NOT throw; saveState not called",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/selectPath.ts",
+    "test_file": "tests/selectPath.test.ts",
+    "covers_contract_requirement": "A5"
+  },
+  {
+    "id": "T-231",
+    "name": "selectPath state persists via saveState round-trip (integration with cycle-2 saveState)",
+    "behavior": "await selectPath; await loadState(projectRoot) → { kind: 'ok', state }; state.selected_path === '01-orderbook-viewer'; state.cursor.phase_id === 'p1-bootstrap'; state.cursor.spot_id === 'p1-spot-1'; state.ladder deep-equals {}",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/selectPath.ts",
+    "test_file": "tests/selectPath.test.ts",
+    "covers_contract_requirement": "A5"
+  },
+  {
+    "id": "T-232",
+    "name": "setPersonalization happy path: valid values persist into state.personalization",
+    "behavior": "seed state with selected_path='01-orderbook-viewer'; await setPersonalization({ projectRoot, values: { poll_interval_ms: 5000, pool_subset: 'DEEP_SUI' } }) → { ok: true }; await loadState; state.personalization.poll_interval_ms === 5000; state.personalization.pool_subset === 'DEEP_SUI'",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/setPersonalization.ts",
+    "test_file": "tests/setPersonalization.test.ts",
+    "covers_contract_requirement": "A5"
+  },
+  {
+    "id": "T-233",
+    "name": "setPersonalization with empty values uses path's declared defaults (Use defaults)",
+    "behavior": "seed state with selected_path='01-orderbook-viewer' and personalization {}; await setPersonalization({ projectRoot, values: {} }) → { ok: true }; await loadState; state.personalization.poll_interval_ms === 3000 AND state.personalization.pool_subset === 'both'",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/setPersonalization.ts",
+    "test_file": "tests/setPersonalization.test.ts",
+    "covers_contract_requirement": "A6"
+  },
+  {
+    "id": "T-234",
+    "name": "setPersonalization rejects out-of-range poll_interval_ms with ok:false errors and writes nothing",
+    "behavior": "spy on state.saveState; await setPersonalization({ projectRoot, values: { poll_interval_ms: 100 } }) → { ok: false, errors: [matches /poll_interval_ms/] }; saveState was NOT called",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/setPersonalization.ts",
+    "test_file": "tests/setPersonalization.test.ts",
+    "covers_contract_requirement": "A5"
+  },
+  {
+    "id": "T-235",
+    "name": "setPersonalization rejects unknown keys (cycle-4 declared options are exactly two)",
+    "behavior": "await setPersonalization({ projectRoot, values: { render_style: 'pretty' } }) → { ok: false, errors: [matches /render_style|unknown/] }; saveState NOT called",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/setPersonalization.ts",
+    "test_file": "tests/setPersonalization.test.ts",
+    "covers_contract_requirement": "A5"
+  },
+  {
+    "id": "T-236",
+    "name": "setPersonalization refuses when state.selected_path is unset",
+    "behavior": "no state file (cold root) OR state with selected_path=''/undefined; await setPersonalization({ projectRoot, values: {} }) → { ok: false, errors: [matches /selected_path|selectPath/i] }; saveState NOT called",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/setPersonalization.ts",
+    "test_file": "tests/setPersonalization.test.ts",
+    "covers_contract_requirement": "A5"
+  },
+  {
+    "id": "T-237",
+    "name": "setPersonalization preserves keys not under attack (partial update)",
+    "behavior": "seed state with personalization { poll_interval_ms: 5000, pool_subset: 'SUI_USDC' }; await setPersonalization({ projectRoot, values: { poll_interval_ms: 7000 } }) → { ok: true }; loadState; state.personalization.poll_interval_ms === 7000 AND state.personalization.pool_subset === 'SUI_USDC' (unchanged)",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/setPersonalization.ts",
+    "test_file": "tests/setPersonalization.test.ts",
+    "covers_contract_requirement": "A6"
+  },
+  {
+    "id": "T-238",
+    "name": "setPersonalization emits no shell action",
+    "behavior": "deepFindShellKind(result) === false for both ok:true and ok:false branches; source file scan: kind:'shell' literal absent",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/setPersonalization.ts",
+    "test_file": "tests/setPersonalization.test.ts",
+    "covers_contract_requirement": "A11"
+  },
+  {
+    "id": "T-239",
+    "name": "nextSpot returns the active spot view with byte-for-byte target_file/target_range from the manifest",
+    "behavior": "seed state at cursor p1-bootstrap/p1-spot-1 with personalization { poll_interval_ms: 3000, pool_subset: 'both' }; await nextSpot({ projectRoot }); response.spot.target_file === 'src/App.tsx'; response.spot.target_range === '39-58'; response.phase.id === 'p1-bootstrap'",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/nextSpot.ts",
+    "test_file": "tests/nextSpot.test.ts",
+    "covers_contract_requirement": "A3"
+  },
+  {
+    "id": "T-240",
+    "name": "nextSpot substitutes {{ pool_subset }} into spot.prompt with the personalization value",
+    "behavior": "personalization { poll_interval_ms: 3000, pool_subset: 'DEEP_SUI' }; await nextSpot; response.spot.prompt contains the literal 'DEEP_SUI' AND does NOT contain '{{ pool_subset }}' (the placeholder is gone, the value is substituted)",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/nextSpot.ts",
+    "test_file": "tests/nextSpot.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-241",
+    "name": "nextSpot leaves target_file/target_range unsubstituted even when those fields contain literal {{ ... }} sequences (adversarial)",
+    "behavior": "fixture phases.json with a single phase whose spot has target_file='{{ poll_interval_ms }}/App.tsx' and target_range='{{ poll_interval_ms }}-58'; seed state with personalization.poll_interval_ms=5000; await nextSpot; response.spot.target_file === '{{ poll_interval_ms }}/App.tsx' (byte-for-byte, NO substitution); response.spot.target_range === '{{ poll_interval_ms }}-58' (byte-for-byte)",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/nextSpot.ts",
+    "test_file": "tests/nextSpot.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-242",
+    "name": "nextSpot leaves verification.command unsubstituted even when it contains a {{ ... }} sequence (adversarial)",
+    "behavior": "fixture phases.json with verification: { mode: 'compile', command: 'pnpm build {{ poll_interval_ms }}' }; seed personalization.poll_interval_ms=5000; await nextSpot; response.spot.verification.command === 'pnpm build {{ poll_interval_ms }}' (byte-for-byte)",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/nextSpot.ts",
+    "test_file": "tests/nextSpot.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-243",
+    "name": "nextSpot returns doc_links as path-only entries (cycle-4 baseline) verbatim from the manifest",
+    "behavior": "manifest has doc_links: ['.sui-docs/develop/transactions/ptbs/inputs-and-results.mdx', '.ts-sdk-docs/sui/clients/grpc.mdx']; await nextSpot; response.spot.doc_links is an array of two entries; each entry is { path: <one of the two strings> }; cycle-4 does NOT inline-fetch the doc bytes (no .contents key required)",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/nextSpot.ts",
+    "test_file": "tests/nextSpot.test.ts",
+    "covers_contract_requirement": "A10"
+  },
+  {
+    "id": "T-244",
+    "name": "nextSpot returns ladder state for the current spot (or default-rung when state.ladder[spot.id] is absent)",
+    "behavior": "case A: state.ladder = { 'p1-spot-1': { hint_used: true, reference_shown: false, auto_completed: false } }; response.ladder.hint_used === true. case B: state.ladder = {}; response.ladder deep-equals { hint_used: false, reference_shown: false, auto_completed: false }",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/nextSpot.ts",
+    "test_file": "tests/nextSpot.test.ts",
+    "covers_contract_requirement": "A3"
+  },
+  {
+    "id": "T-245",
+    "name": "nextSpot returns { done: true, spot: undefined } at end-of-path",
+    "behavior": "seed state.cursor walked off the last spot of the last phase; await nextSpot; response.done === true; response.spot is undefined (or null); response carries no shell action",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/nextSpot.ts",
+    "test_file": "tests/nextSpot.test.ts",
+    "covers_contract_requirement": "A4"
+  },
+  {
+    "id": "T-246",
+    "name": "nextSpot response carries no action field",
+    "behavior": "for both done:true and active-spot responses: 'action' is not a key on the response object (response.action === undefined); deepFindShellKind(response) === false",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/nextSpot.ts",
+    "test_file": "tests/nextSpot.test.ts",
+    "covers_contract_requirement": "A11"
+  },
+  {
+    "id": "T-247",
+    "name": "nextSpot when state.selected_path is unset returns a structured error (no throw)",
+    "behavior": "no state file at projectRoot; await nextSpot({ projectRoot }); resolves to a structured error/response (e.g. { error: 'no path selected' } or { ok: false, errors: [...] }); does NOT throw; saveState not called",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/nextSpot.ts",
+    "test_file": "tests/nextSpot.test.ts",
+    "covers_contract_requirement": "A4"
+  },
+  {
+    "id": "T-248",
+    "name": "verifySpot pass case: advances cursor and returns { pass: true, advanced: true }",
+    "behavior": "vi.mock verify.runVerification → { pass: true, output: 'built' }; seed state at p1-bootstrap/p1-spot-1; await verifySpot({ projectRoot }) → { pass: true, advanced: true, output: 'built' }; loadState; state.cursor moved to the next spot (or done-marked if last)",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/verifySpot.ts",
+    "test_file": "tests/verifySpot.test.ts",
+    "covers_contract_requirement": "A4"
+  },
+  {
+    "id": "T-249",
+    "name": "verifySpot fail case: leaves cursor untouched and returns { pass: false, advanced: false }",
+    "behavior": "runVerification stub → { pass: false, output: 'TS2304' }; seed state at p1-bootstrap/p1-spot-1; await verifySpot; result.pass === false; result.advanced === false; result.output contains 'TS2304'; loadState; state.cursor is still { phase_id: 'p1-bootstrap', spot_id: 'p1-spot-1' } (unchanged)",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/verifySpot.ts",
+    "test_file": "tests/verifySpot.test.ts",
+    "covers_contract_requirement": "A4"
+  },
+  {
+    "id": "T-250",
+    "name": "verifySpot dispatches the spot's verification block to runVerification (compile case)",
+    "behavior": "runVerification spy; await verifySpot; spy was called once with first arg deep-equal { mode: 'compile', command: 'pnpm build' } (the manifest's p1-spot-1 verification block) and second arg === projectRoot",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/verifySpot.ts",
+    "test_file": "tests/verifySpot.test.ts",
+    "covers_contract_requirement": "A8"
+  },
+  {
+    "id": "T-251",
+    "name": "verifySpot emits no shell action",
+    "behavior": "deepFindShellKind(result) === false for both pass and fail cases; source scan of mcp/server/src/tools/verifySpot.ts shows zero kind:'shell' literals",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/verifySpot.ts",
+    "test_file": "tests/verifySpot.test.ts",
+    "covers_contract_requirement": "A11"
+  },
+  {
+    "id": "T-252",
+    "name": "verifySpot when state.selected_path is unset returns a structured error",
+    "behavior": "no state file; await verifySpot({ projectRoot }); resolves to { pass: false, error: matching /no path selected|state/i } (or equivalent structured shape); does NOT throw",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/verifySpot.ts",
+    "test_file": "tests/verifySpot.test.ts",
+    "covers_contract_requirement": "A4"
+  },
+  {
+    "id": "T-253",
+    "name": "verifySpot pass advancing past the last spot leaves state in done position (next nextSpot returns done)",
+    "behavior": "seed state at the last spot; runVerification stub → pass:true; await verifySpot; await nextSpot; response.done === true; state.cursor reflects the done position",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/verifySpot.ts",
+    "test_file": "tests/verifySpot.test.ts",
+    "covers_contract_requirement": "A4"
+  },
+  {
+    "id": "T-254",
+    "name": "RegistryWarning is a discriminated union of exactly eight kinds matching what registry.ts emits",
+    "behavior": "fs.readFileSync mcp/server/src/warnings.ts; for each k in ['no-paths-dir','empty-paths-dir','missing-path-json','malformed-path-json','invalid-path-json','missing-phases-json','malformed-phases-json','invalid-phases-json'] assert content.includes(\"'\" + k + \"'\") || includes('\"' + k + '\"'); AND assert content does NOT contain a `kind: string` member of RegistryWarning (the loose shape must be gone)",
+    "kind": "unit",
+    "target_file": "mcp/server/src/warnings.ts",
+    "test_file": "tests/registry.test.ts",
+    "covers_contract_requirement": "A12"
+  },
+  {
+    "id": "T-255",
+    "name": "warnings.ts no longer exports the orphan PathMalformedWarning / PathsEmptyWarning / PathsMissingWarning interfaces",
+    "behavior": "fs.readFileSync mcp/server/src/warnings.ts; content does NOT contain literal strings 'PathMalformedWarning', 'PathsEmptyWarning', 'PathsMissingWarning' (those three interfaces must be deleted); content still contains 'RegistryWarning'",
+    "kind": "unit",
+    "target_file": "mcp/server/src/warnings.ts",
+    "test_file": "tests/registry.test.ts",
+    "covers_contract_requirement": "A12"
+  },
+  {
+    "id": "T-256",
+    "name": "RegistryWarning narrowing — type-level: state-corrupt narrows away from RegistryWarning",
+    "behavior": "type-only test in tests/registry.test.ts: declare let w: RegistryWarning; if (w.kind === 'state-corrupt') { /* this branch unreachable at type level */ const _: never = w; }; the test compiles iff RegistryWarning's kind union does NOT include 'state-corrupt'. Exercise via tsc --noEmit step (T-282 covers).",
+    "kind": "unit",
+    "target_file": "mcp/server/src/warnings.ts",
+    "test_file": "tests/registry.test.ts",
+    "covers_contract_requirement": "A12"
+  },
+  {
+    "id": "T-257",
+    "name": "scanRegistry warning wire kinds preserved against cycle-1 fixtures (regression)",
+    "behavior": "scanRegistry against tests/fixtures/paths-malformed → result.warnings[0].kind === 'malformed-path-json' character-for-character; against tests/fixtures/paths-empty → 'empty-paths-dir'; missing paths/ → 'no-paths-dir'. The narrower union must match the existing wire bytes.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/registry.ts",
+    "test_file": "tests/registry.test.ts",
+    "covers_contract_requirement": "A12"
+  },
+  {
+    "id": "T-258",
+    "name": "warnings.ts adds new phase-engine warning kinds: phase-engine-phases-load-failed, personalization-validation-failed, verification-mode-unsupported",
+    "behavior": "fs.readFileSync mcp/server/src/warnings.ts; content contains all three literal strings (each appears at least once)",
+    "kind": "unit",
+    "target_file": "mcp/server/src/warnings.ts",
+    "test_file": "tests/registry.test.ts",
+    "covers_contract_requirement": "A12"
+  },
+  {
+    "id": "T-259",
+    "name": "preflight.ts no longer exports setSpawnOverride and contains no module-level spawnOverrides Map",
+    "behavior": "fs.readFileSync mcp/server/src/preflight.ts; content.indexOf('setSpawnOverride') === -1; content.indexOf('spawnOverrides') === -1; module exports do not include a function named setSpawnOverride (verify via dynamic import: assert ('setSpawnOverride' in mod) === false)",
+    "kind": "unit",
+    "target_file": "mcp/server/src/preflight.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A13"
+  },
+  {
+    "id": "T-260",
+    "name": "no source file in mcp/server/src/ references setSpawnOverride",
+    "behavior": "fs walk mcp/server/src/ recursively for .ts files; for each file, assert content.indexOf('setSpawnOverride') === -1; offenders array empty (cycle-3 carry-forward M005)",
+    "kind": "unit",
+    "target_file": "mcp/server/src/preflight.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A13"
+  },
+  {
+    "id": "T-261",
+    "name": "runProbe consults only opts.spawn (no module-level lookup)",
+    "behavior": "import { runProbe } from preflight.js; pass an explicit spawn stub via opts.spawn that returns { status: 0, stdout: 'docker pass', stderr: '' }; await runProbe('docker-running', { spawn: stub }); stub was called exactly once; result.pass === true; the test does NOT rely on any setSpawnOverride or harness-level injection",
+    "kind": "unit",
+    "target_file": "mcp/server/src/preflight.ts",
+    "test_file": "tests/preflight.test.ts",
+    "covers_contract_requirement": "A13"
+  },
+  {
+    "id": "T-262",
+    "name": "harness withDockerStub installs the stub and passes it via ProbeOptions to runProbe (no global mutation)",
+    "behavior": "bootHarness; before withDockerStub: process.env unchanged; await harness.withDockerStub({ exitCode: 1 }); await harness.runPreflightProbe('docker-running'); response.pass === false; AND a snapshot of imports of preflight.js's exports does NOT include setSpawnOverride. Exercises the cycle-3 E-010 scenario through the new injection seam.",
+    "kind": "integration",
+    "target_file": "scripts/e2e/harness.ts",
+    "test_file": "tests/harness.preflight.test.ts",
+    "covers_contract_requirement": "A13"
+  },
+  {
+    "id": "T-263",
+    "name": "harness withSuiCliStub continues to drive E-011 scenario after spawn-injection rewire",
+    "behavior": "bootHarness; await harness.withSuiCliStub({ version: '1.62.0' }); await harness.runPreflightProbe('sui-cli-version'); response.pass === false; response.message contains '1.62.0' and 'brew install sui'; cycle-3 carry-forward stays green",
+    "kind": "integration",
+    "target_file": "scripts/e2e/harness.ts",
+    "test_file": "tests/harness.preflight.test.ts",
+    "covers_contract_requirement": "A13"
+  },
+  {
+    "id": "T-264",
+    "name": "state.ts no longer imports from node:fs (only node:fs/promises and node:path)",
+    "behavior": "fs.readFileSync mcp/server/src/state.ts; assert content does NOT match /from\\s+['\\\"]node:fs['\\\"]/ (the bare 'node:fs' import is gone); content DOES still match /from\\s+['\\\"]node:fs\\/promises['\\\"]/ AND /from\\s+['\\\"]node:path['\\\"]/",
+    "kind": "unit",
+    "target_file": "mcp/server/src/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A14"
+  },
+  {
+    "id": "T-265",
+    "name": "state.ts contains zero fsyncSync references",
+    "behavior": "fs.readFileSync mcp/server/src/state.ts; content.indexOf('fsyncSync') === -1 (the redundant fsync line + import are removed)",
+    "kind": "unit",
+    "target_file": "mcp/server/src/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A14"
+  },
+  {
+    "id": "T-266",
+    "name": "saveState durability sequence: open(tmp, 'r+') → handle.sync() → handle.close() → rename (FileHandle.prototype.sync spy, no fs.fsync*)",
+    "behavior": "vi.spyOn(fsPromises, 'open'); patch the resolved FileHandle's .sync to a spy and .close to a spy; spy on fsPromises.rename; await saveState(root, validState); the patched .sync was called exactly once on the SAME FileHandle the open returned (identity); .close was called after .sync; rename was called after .close (invocationCallOrder ascending); fs.fsyncSync was NEVER called (spy on fs.fsyncSync mock.calls.length === 0). Migrates T-061 from the legacy fs.fsync* spy.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A14"
+  },
+  {
+    "id": "T-267",
+    "name": "saveState round-trip still passes after the redundant fsync removal (regression)",
+    "behavior": "regression of cycle-3's T-169: await saveState(root, validState); await loadState(root) → { kind: 'ok', state: deep-equal(validState) }; the durability path remains intact",
+    "kind": "unit",
+    "target_file": "mcp/server/src/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A14"
+  },
+  {
+    "id": "T-268",
+    "name": "validateState accepts a State whose ladder rungs lack auto_write_attempted (back-compat with cycle-2/3 schema_version: 1 files)",
+    "behavior": "validateState({ schema_version: 1, selected_path: 'x', personalization: { poll_interval_ms: 3000, pool_subset: 'both' }, cursor: { phase_id: 'p', spot_id: 's' }, ladder: { 'p1-spot-1': { hint_used: false, reference_shown: false, auto_completed: false } }, history: [] }) → { ok: true }; assert validation.value.ladder['p1-spot-1'].auto_write_attempted === false (default-on-load when absent)",
+    "kind": "unit",
+    "target_file": "mcp/server/src/schemas/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A15"
+  },
+  {
+    "id": "T-269",
+    "name": "validateState accepts a ladder rung with auto_write_attempted: true",
+    "behavior": "validateState with ladder: { 'p1-spot-1': { hint_used: false, reference_shown: false, auto_completed: false, auto_write_attempted: true } } → { ok: true }; validation.value.ladder['p1-spot-1'].auto_write_attempted === true",
+    "kind": "unit",
+    "target_file": "mcp/server/src/schemas/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A15"
+  },
+  {
+    "id": "T-270",
+    "name": "STATE_SCHEMA_VERSION stays 1 (the cycle-4 ladder field addition is append-only)",
+    "behavior": "import { STATE_SCHEMA_VERSION } from state.js; expect(STATE_SCHEMA_VERSION).toBe(1)",
+    "kind": "unit",
+    "target_file": "mcp/server/src/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A15"
+  },
+  {
+    "id": "T-271",
+    "name": "saveState round-trip preserves auto_write_attempted (default false when not set)",
+    "behavior": "construct State with ladder { 'p1-spot-1': { hint_used: true, reference_shown: false, auto_completed: false } } (auto_write_attempted absent at write time); await saveState; await loadState; loaded.ladder['p1-spot-1'].auto_write_attempted === false",
+    "kind": "unit",
+    "target_file": "mcp/server/src/state.ts",
+    "test_file": "tests/state.test.ts",
+    "covers_contract_requirement": "A15"
+  },
+  {
+    "id": "T-272",
+    "name": "engine outside paths/ and tests/fixtures/ contains zero '01-orderbook-viewer' literals",
+    "behavior": "fs walk REPO_ROOT skipping ['paths','tests/fixtures','node_modules','.git','.forge','.remember']; for each .ts/.tsx/.md/.json file content.indexOf('01-orderbook-viewer') === -1; offenders array is empty (cycle 1 A10/A21 carry-forward; new cycle-4 engine code must keep this clean)",
+    "kind": "unit",
+    "target_file": "mcp/server/src/index.ts",
+    "test_file": "tests/harness.lesson.test.ts",
+    "covers_contract_requirement": "A11"
+  },
+  {
+    "id": "T-273",
+    "name": "selectPath, setPersonalization, nextSpot, verifySpot source files contain zero kind:'shell' literals",
+    "behavior": "for each file in ['mcp/server/src/tools/selectPath.ts','mcp/server/src/tools/setPersonalization.ts','mcp/server/src/tools/nextSpot.ts','mcp/server/src/tools/verifySpot.ts']: fs.readFileSync; both regexes /kind\\s*:\\s*'shell'/ and /kind\\s*:\\s*\"shell\"/ fail to match; cycle 1 A14 + cycle 3 A12 carry-forward extended to the cycle-4 surface",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/selectPath.ts",
+    "test_file": "tests/harness.lesson.test.ts",
+    "covers_contract_requirement": "A11"
+  },
+  {
+    "id": "T-274",
+    "name": "AC-1.3 zero-write preserved on cycle-4 surface: outputStyleOk=false → no new tool's saveState is called",
+    "behavior": "spy on state.saveState; mock outputStyle.probeOutputStyle to return { ok: false }; seed a temp project root with paths/01-orderbook-viewer/; await runStart({ projectRoot: tempRoot }); expect saveState was NOT called (cycle-4's new tools are reachable only after start with ok:true, but the static assertion is that start with ok:false drives no path engine code that would call save). Snapshot equality before/after on tempRoot.",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/start.ts",
+    "test_file": "tests/harness.lesson.test.ts",
+    "covers_contract_requirement": "A11"
+  },
+  {
+    "id": "T-275",
+    "name": "selectPath short-circuits when loadState returns kind:'corrupt' (no state writes)",
+    "behavior": "vi.mock state.loadState → { kind: 'corrupt', archivedTo: '/x' }; vi.spy state.saveState; await selectPath({ projectRoot, slug: '01-orderbook-viewer' }); result.ok === false (or response surfaces a state warning); saveState was NOT called; the new tool DOES NOT clobber a corruption recovery in flight",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/selectPath.ts",
+    "test_file": "tests/selectPath.test.ts",
+    "covers_contract_requirement": "A11"
+  },
+  {
+    "id": "T-276",
+    "name": "setPersonalization short-circuits when loadState returns kind:'schema-mismatch'",
+    "behavior": "vi.mock loadState → { kind: 'schema-mismatch', foundVersion: 999 }; vi.spy saveState; await setPersonalization({ projectRoot, values: {} }); result.ok === false; saveState NOT called",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/setPersonalization.ts",
+    "test_file": "tests/setPersonalization.test.ts",
+    "covers_contract_requirement": "A11"
+  },
+  {
+    "id": "T-277",
+    "name": "personalization_ranges in path.json is optional and validates when present (poll_interval_ms ranges)",
+    "behavior": "validatePath with the cycle-4 path.json shape including personalization_ranges: { poll_interval_ms: { min: 1000, max: 30000, default: 3000 }, pool_subset: { values: ['both','DEEP_SUI','SUI_USDC'], default: 'both' } } → { ok: true, value: <data> }; AND validatePath with the cycle-3 path.json shape (no personalization_ranges) STILL → { ok: true } (back-compat); AND validatePath with personalization_ranges.poll_interval_ms.min > max → { ok: false }",
+    "kind": "unit",
+    "target_file": "mcp/server/src/schemas/path.ts",
+    "test_file": "tests/registry.test.ts",
+    "covers_contract_requirement": "A5"
+  },
+  {
+    "id": "T-278",
+    "name": "paths/01-orderbook-viewer/path.json declares personalization_ranges with the spec defaults",
+    "behavior": "fs.readFileSync paths/01-orderbook-viewer/path.json → JSON.parse; obj.personalization_ranges.poll_interval_ms deep-equal { min: 1000, max: 30000, default: 3000 }; obj.personalization_ranges.pool_subset deep-equal { values: ['both','DEEP_SUI','SUI_USDC'], default: 'both' }",
+    "kind": "unit",
+    "target_file": "paths/01-orderbook-viewer/path.json",
+    "test_file": "tests/registry.test.ts",
+    "covers_contract_requirement": "A5"
+  },
+  {
+    "id": "T-279",
+    "name": "paths/01-orderbook-viewer/phases.json fully populates phase 1 with verification.mode=compile and command=pnpm build",
+    "behavior": "fs.readFileSync paths/01-orderbook-viewer/phases.json → JSON.parse; obj.phases[0].id === 'p1-bootstrap'; obj.phases[0].spots[0].id === 'p1-spot-1'; spots[0].target_file === 'src/App.tsx'; spots[0].target_range === '39-58'; spots[0].verification deep-equal { mode: 'compile', command: 'pnpm build' }; spots[0].rungs.hint_md === 'rungs/p1-spot-1/hint.md'; reference_md and auto_write_md likewise; spots[0].doc_links is a non-empty array",
+    "kind": "unit",
+    "target_file": "paths/01-orderbook-viewer/phases.json",
+    "test_file": "tests/phaseEngine.test.ts",
+    "covers_contract_requirement": "A8"
+  },
+  {
+    "id": "T-280",
+    "name": "paths/01-orderbook-viewer/phases.json phase-1 prompt mentions {{ pool_subset }} (substitution exercised)",
+    "behavior": "obj.phases[0].spots[0].prompt contains the literal substring '{{ pool_subset }}' (or '{{pool_subset}}'); the prompt is the substitution-driving content for AC-6.3",
+    "kind": "unit",
+    "target_file": "paths/01-orderbook-viewer/phases.json",
+    "test_file": "tests/phaseEngine.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-281",
+    "name": "phases.json phases 2 and 3 are schema-valid placeholders (one stub spot each, prompt says TBD in cycle 5+)",
+    "behavior": "obj.phases.length === 3; obj.phases[1].spots.length === 1 AND obj.phases[2].spots.length === 1; both stub prompts contain the substring 'TBD' AND 'cycle 5'; both stub spots declare verification.mode === 'compile'; validatePhases on the full phases.json → { ok: true }",
+    "kind": "unit",
+    "target_file": "paths/01-orderbook-viewer/phases.json",
+    "test_file": "tests/phaseEngine.test.ts",
+    "covers_contract_requirement": "A2"
+  },
+  {
+    "id": "T-282",
+    "name": "tsc --noEmit on mcp/server/ exits zero with cycle-4 additions",
+    "behavior": "spawnSync('pnpm', ['--filter','./mcp/server','exec','tsc','--noEmit'], { cwd: REPO_ROOT, encoding: 'utf8' }); result.status === 0 (compiles cleanly with the new phaseEngine.ts, verify.ts, personalization.ts, four new tools, and the warnings union tightening, under strict + moduleResolution NodeNext)",
+    "kind": "unit",
+    "target_file": "mcp/server/src/index.ts",
+    "test_file": "tests/harness.lesson.test.ts",
+    "covers_contract_requirement": "A16"
+  },
+  {
+    "id": "T-283",
+    "name": "E-001 cold-start happy path through MCP transport: start → selectPath → setPersonalization (defaults) → nextSpot → verifySpot",
+    "behavior": "bootHarness({ projectRoot: tempProjectRoot seeded with paths/01-orderbook-viewer copied from repo }); withVerifyStub({ pass: true, output: 'built' }); await harness.callTool('start', { projectRoot }); parsePayload.outputStyleOk === true. await harness.callTool('selectPath', { projectRoot, slug: '01-orderbook-viewer' }); ok === true. await harness.callTool('setPersonalization', { projectRoot, values: {} }); ok === true. await harness.callTool('nextSpot', { projectRoot }); response.spot.target_file === 'src/App.tsx' AND response.spot.target_range === '39-58' AND response.phase.id === 'p1-bootstrap'. await harness.callTool('verifySpot', { projectRoot }); response.pass === true AND response.advanced === true. assert state.json now exists at projectRoot/.sui-deepbook-course/state.json",
+    "kind": "integration",
+    "target_file": "scripts/e2e/harness.ts",
+    "test_file": "tests/harness.lesson.test.ts",
+    "covers_contract_requirement": "A1"
+  },
+  {
+    "id": "T-284",
+    "name": "E-014 personalization-in-spot through MCP transport: setPersonalization custom values → nextSpot prompt is substituted, target_file/target_range unchanged",
+    "behavior": "bootHarness; await callTool('start',...); await callTool('selectPath', { slug: '01-orderbook-viewer' }); await callTool('setPersonalization', { values: { poll_interval_ms: 5000, pool_subset: 'DEEP_SUI' } }); ok === true. await callTool('nextSpot'); response.spot.prompt.indexOf('DEEP_SUI') > -1 AND response.spot.prompt.indexOf('{{ pool_subset }}') === -1; response.spot.target_file === 'src/App.tsx' (byte-for-byte from manifest); response.spot.target_range === '39-58' (byte-for-byte). The personalization values surfaced as substitution but did NOT alter the spot file/line manifest.",
+    "kind": "integration",
+    "target_file": "scripts/e2e/harness.ts",
+    "test_file": "tests/harness.lesson.test.ts",
+    "covers_contract_requirement": "A7"
+  },
+  {
+    "id": "T-285",
+    "name": "harness exposes selectPath/setPersonalization/nextSpot/verifySpot fixture wrappers that delegate to callTool",
+    "behavior": "bootHarness; for each name in ['selectPath','setPersonalization','nextSpot','verifySpot']: typeof harness[name] === 'function'; calling harness[name](args) triggers harness.callTool(name, args) once (verified via vi.spyOn(harness, 'callTool')); response shape matches the underlying callTool response",
+    "kind": "integration",
+    "target_file": "scripts/e2e/harness.ts",
+    "test_file": "tests/harness.lesson.test.ts",
+    "covers_contract_requirement": "A1"
+  },
+  {
+    "id": "T-286",
+    "name": "harness exposes withVerifyStub fixture (E-001 / E-014 do not shell out to real pnpm)",
+    "behavior": "bootHarness; typeof harness.withVerifyStub === 'function'; await harness.withVerifyStub({ pass: true, output: 'built' }); await callTool('verifySpot'); spy on subprocess spawn assert spawn.mock.calls.length === 0; response.pass === true AND response.output === 'built'",
+    "kind": "integration",
+    "target_file": "scripts/e2e/harness.ts",
+    "test_file": "tests/harness.lesson.test.ts",
+    "covers_contract_requirement": "A8"
+  },
+  {
+    "id": "T-287",
+    "name": "selectPath input validation rejects non-string slug",
+    "behavior": "await selectPath({ projectRoot, slug: 42 as any }); resolves to { ok: false, errors: [matches /slug.*string|type/i] }; saveState NOT called; does NOT throw",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/selectPath.ts",
+    "test_file": "tests/selectPath.test.ts",
+    "covers_contract_requirement": "A5"
+  },
+  {
+    "id": "T-288",
+    "name": "setPersonalization rejects values when the parameter is the wrong type and aggregates errors",
+    "behavior": "seed state with selected_path='01-orderbook-viewer'; await setPersonalization({ projectRoot, values: { poll_interval_ms: 'fast', pool_subset: 'WHATEVER' } }); result.ok === false; result.errors.length >= 2 (one per offending key); each errors[i] is a string; saveState NOT called",
+    "kind": "unit",
+    "target_file": "mcp/server/src/tools/setPersonalization.ts",
+    "test_file": "tests/setPersonalization.test.ts",
+    "covers_contract_requirement": "A5"
+  },
+  {
+    "id": "T-289",
+    "name": "VerificationModeUnsupportedError carries a structured 'mode' field",
+    "behavior": "try { await runVerification({ mode: 'simulate', endpoint: 'x', expected_status: 200 }, root) } catch (err) { expect(err.mode === 'simulate' OR err.message contains 'simulate'); err is an instanceof VerificationModeUnsupportedError; err is an instance of Error }",
+    "kind": "unit",
+    "target_file": "mcp/server/src/verify.ts",
+    "test_file": "tests/verify.test.ts",
+    "covers_contract_requirement": "A8"
+  },
+  {
+    "id": "T-290",
+    "name": "phases/p1-bootstrap.md exists and has a non-trivial body",
+    "behavior": "fs.statSync('paths/01-orderbook-viewer/phases/p1-bootstrap.md').size > 0; fs.readFileSync as utf8; content.length >= 200 (~10-20 lines of explainer narrative)",
+    "kind": "unit",
+    "target_file": "paths/01-orderbook-viewer/phases/p1-bootstrap.md",
+    "test_file": "tests/phaseEngine.test.ts",
+    "covers_contract_requirement": "A4"
+  },
+  {
+    "id": "T-291",
+    "name": "rungs/p1-spot-1/{hint,reference,auto}.md exist with non-empty bodies",
+    "behavior": "for each f in ['hint.md','reference.md','auto.md']: fs.statSync('paths/01-orderbook-viewer/rungs/p1-spot-1/' + f).size > 0; reference.md content includes the substring 'packageIds' or 'coinMap' or 'poolMap' (the load-bearing identifiers from lines 39-58); hint.md content contains '{{ pool_subset }}' (substitution exercised on the rung payload, per A7's substitution scope)",
+    "kind": "unit",
+    "target_file": "paths/01-orderbook-viewer/rungs/p1-spot-1/hint.md",
+    "test_file": "tests/phaseEngine.test.ts",
+    "covers_contract_requirement": "A7"
+  }
+]

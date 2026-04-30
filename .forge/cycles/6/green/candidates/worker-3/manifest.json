@@ -1,0 +1,26 @@
+{
+  "worker": 3,
+  "target_files": [
+    "paths/01-orderbook-viewer/phases.json",
+    "paths/01-orderbook-viewer/rungs/p2-spot-1/hint.md",
+    "paths/01-orderbook-viewer/rungs/p2-spot-1/reference.md",
+    "paths/01-orderbook-viewer/rungs/p2-spot-1/auto.md",
+    "paths/01-orderbook-viewer/rungs/p3-spot-1/hint.md",
+    "paths/01-orderbook-viewer/rungs/p3-spot-1/reference.md",
+    "paths/01-orderbook-viewer/rungs/p3-spot-1/auto.md",
+    "paths/01-orderbook-viewer/phases/p2.md",
+    "paths/01-orderbook-viewer/phases/p3.md",
+    "mcp/server/src/outputStyle.ts",
+    "mcp/server/src/state.ts",
+    "mcp/server/src/warnings.ts",
+    "mcp/server/src/tools/selectPath.ts",
+    "mcp/server/src/tools/start.ts",
+    "mcp/server/src/tools/runPreflightProbe.ts",
+    ".forge/e2e/scenarios.json",
+    "scripts/cycle-e2e-pass.sh"
+  ],
+  "lines_changed": 312,
+  "blocked": false,
+  "tests_pass": null,
+  "notes": "Worker 3 implements all six H-findings: (1) phases.json renames p2-polling→p2-retry and p3-display→p3-poll with correct target_ranges, explainer_md paths, rungs blocks, doc_links, and verification modes; the p3 prompt embeds {{ poll_interval_ms }}; all 8 new content files (rungs/p2-spot-1/{hint,reference,auto}.md, rungs/p3-spot-1/{hint,reference,auto}.md, phases/p2.md, phases/p3.md) are created and non-empty, with p3 reference/auto containing the literal placeholder. (2) outputStyle.ts: both bare { ok:false } branches now return { ok:false, warning:{ kind:'output-style-plugin-not-enabled', message:'...' }} with the plugin name and activation step; warnings.ts adds the OutputStylePluginNotEnabledWarning interface to the union; start.ts types the new warning correctly. (3) state.ts: archiveCorruptFile computes a SHA-256 content hash (hex-sliced to 16 chars) and embeds it in the archive filename; on each call it scans the state dir for an existing archive with the same hash and returns its path without writing a second copy, making dedup O(dir scan) and hash-stable; selectPath.ts: when stateResult.kind==='corrupt' && archivedTo is defined, falls through to the fresh-state mint path instead of returning errors. (4) runPreflightProbe.ts: RunPreflightProbeArgs gains probeOpts?: Partial<Record<ProbeId, ProbeOptions>>; the initial runProbe call and the precondition-checker lambda both forward probeOpts[pid] ?? {} so harness stubs reach the gate deterministically. (5) .forge/e2e/scenarios.json E-008 gains a fifth precondition 'Sui CLI in 1.63.2–1.64.1' (en-dash U+2013); scripts/cycle-e2e-pass.sh is created as an executable bash script that checks sui-cli version BEFORE docker (ensuring the sui-skip fires even when docker is down), emits a structured SKIP line on out-of-range sui, and exits 0."
+}

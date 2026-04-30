@@ -1,0 +1,86 @@
+{
+  "phases": [
+    {
+      "id": "p1-bootstrap",
+      "title": "Phase 1 — Manifest → SDK Config",
+      "explainer_md": "phases/p1-bootstrap.md",
+      "spots": [
+        {
+          "id": "p1-spot-1",
+          "title": "Wire the deployment manifest to the DeepBook SDK client",
+          "target_file": "src/App.tsx",
+          "target_range": "39-58",
+          "prompt": "The deployment manifest has been fetched. Now you need to wire it into the DeepBook SDK client.\n\nYour task: implement the three helper functions (`packageIds`, `coinMap`, `poolMap`) that extract the SDK configuration from the manifest, then build the `SuiGrpcClient` and attach the `deepbook` extension.\n\nYou are configuring for pool: {{ pool_subset }}.\n\nLines 39–58 of `src/App.tsx` are the target. Use `packageIds(manifest)`, `coinMap(manifest)`, and `poolMap(manifest)` as arguments to the `deepbook(...)` call.",
+          "verification": {
+            "mode": "compile",
+            "command": "pnpm build"
+          },
+          "rungs": {
+            "hint_md": "rungs/p1-spot-1/hint.md",
+            "reference_md": "rungs/p1-spot-1/reference.md",
+            "auto_write_md": "rungs/p1-spot-1/auto.md"
+          },
+          "doc_links": [
+            ".sui-docs/develop/transactions/ptbs/inputs-and-results.mdx",
+            ".ts-sdk-docs/sui/clients/grpc.mdx"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "p2-retry",
+      "title": "Phase 2 — Resilient gRPC Calls with withRetry",
+      "explainer_md": "phases/p2.md",
+      "spots": [
+        {
+          "id": "p2-spot-1",
+          "title": "Implement the withRetry helper for resilient DeepBook gRPC simulation calls",
+          "target_file": "src/App.tsx",
+          "target_range": "103-114",
+          "prompt": "The DeepBook gRPC simulation calls can fail transiently. Your task is to implement a `withRetry` helper that wraps a promise-returning function with automatic retry logic.\n\nImplement `withRetry` at lines 103-114 of `src/App.tsx`. The helper should:\n- Accept a function that returns a Promise\n- Retry up to a configurable number of times on failure\n- Use exponential back-off between retries\n- Re-throw the last error if all retries are exhausted\n\nThis will be used to wrap the `simulatePlaceMarketOrder` and `simulatePlaceLimitOrder` calls in the polling loop.",
+          "verification": {
+            "mode": "compile",
+            "command": "pnpm build"
+          },
+          "rungs": {
+            "hint_md": "rungs/p2-spot-1/hint.md",
+            "reference_md": "rungs/p2-spot-1/reference.md",
+            "auto_write_md": "rungs/p2-spot-1/auto.md"
+          },
+          "doc_links": [
+            ".ts-sdk-docs/sui/clients/grpc.mdx",
+            ".sui-docs/develop/transactions/ptbs/inputs-and-results.mdx"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "p3-poll",
+      "title": "Phase 3 — Polling Loop with Failure Tolerance",
+      "explainer_md": "phases/p3.md",
+      "spots": [
+        {
+          "id": "p3-spot-1",
+          "title": "Implement the polling tick that fetches mid price and level 2 ticks from DeepBook",
+          "target_file": "src/App.tsx",
+          "target_range": "116-145",
+          "prompt": "Implement the polling loop that periodically fetches order book data from DeepBook using the `withRetry` helper you built in phase 2.\n\nYour task: implement the polling tick at lines 116-145 of `src/App.tsx`. The tick should:\n- Call `deepbook.getLevel2TicksFromMid` to fetch mid price and ticks\n- Use `withRetry` to wrap the DeepBook call for resilience\n- Update the component state with the fetched data\n- Poll every {{ poll_interval_ms }} milliseconds using `setInterval`\n- Handle errors gracefully by logging them without crashing the UI\n\nThe polling interval is {{ poll_interval_ms }}ms as configured in your personalization settings.",
+          "verification": {
+            "mode": "simulate",
+            "endpoint": "http://localhost:9009/manifest",
+            "expected_status": 200
+          },
+          "rungs": {
+            "hint_md": "rungs/p3-spot-1/hint.md",
+            "reference_md": "rungs/p3-spot-1/reference.md",
+            "auto_write_md": "rungs/p3-spot-1/auto.md"
+          },
+          "doc_links": [
+            ".ts-sdk-docs/sui/clients/grpc.mdx",
+            ".sui-docs/develop/transactions/ptbs/inputs-and-results.mdx"
+          ]
+        }
+      ]
+    }
+  ]
+}

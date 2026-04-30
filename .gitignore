@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.vitest-cache/
+.DS_Store
+*.log
+
+# Personal session memory (not part of the project artifact)
+.remember/
+

@@ -1,0 +1,20 @@
+{
+  "name": "sui-deepbook-course",
+  "version": "1.0.0",
+  "description": "Interactive Sui DeepBook course for advanced DeFi developers",
+  "mcpServers": {
+    "sui-deepbook-course": {
+      "command": "node",
+      "args": ["mcp/server/dist/index.js"],
+      "env": {}
+    }
+  },
+  "commands": {
+    "directory": "commands"
+  },
+  "agents": {},
+  "skills": {
+    "directory": "skills"
+  },
+  "hooks": {}
+}

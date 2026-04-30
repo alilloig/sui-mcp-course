@@ -1,0 +1,30 @@
+{
+  "worker": 4,
+  "target_files": [
+    "mcp/server/src/index.ts",
+    "mcp/server/src/personalization.ts",
+    "mcp/server/src/phaseEngine.ts",
+    "mcp/server/src/preflight.ts",
+    "mcp/server/src/schemas/path.ts",
+    "mcp/server/src/schemas/phases.ts",
+    "mcp/server/src/schemas/state.ts",
+    "mcp/server/src/state.ts",
+    "mcp/server/src/tools/nextSpot.ts",
+    "mcp/server/src/tools/selectPath.ts",
+    "mcp/server/src/tools/setPersonalization.ts",
+    "mcp/server/src/tools/verifySpot.ts",
+    "mcp/server/src/verify.ts",
+    "mcp/server/src/warnings.ts",
+    "paths/01-orderbook-viewer/path.json",
+    "paths/01-orderbook-viewer/phases.json",
+    "paths/01-orderbook-viewer/phases/p1-bootstrap.md",
+    "paths/01-orderbook-viewer/reference/App.tsx",
+    "paths/01-orderbook-viewer/rungs/p1-spot-1/auto.md",
+    "paths/01-orderbook-viewer/rungs/p1-spot-1/hint.md",
+    "paths/01-orderbook-viewer/rungs/p1-spot-1/reference.md",
+    "scripts/e2e/harness.ts",
+    "tests/fixtures/state/valid-cursor-p2.json"
+  ],
+  "lines_changed": 2455,
+  "blocked": false
+}

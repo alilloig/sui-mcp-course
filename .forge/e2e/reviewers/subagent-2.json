@@ -1,0 +1,54 @@
+[
+  {
+    "id": "R2-001",
+    "title": "E-002 plugin-key=false: warning carries kind, plugin key, activation step; no state.json written",
+    "severity": "info",
+    "category": "e2e-flow",
+    "file": "mcp/server/src/outputStyle.ts",
+    "line_range": "17-20,68",
+    "description": "Scenario E-002: with HOME pointed at a temp dir and ~/.claude/settings.json containing { enabledPlugins: { 'learning-output-style@claude-plugins-official': false } }, runStart() returns outputStyleOk=false. The first warning carries kind === 'output-style-plugin-not-enabled' and message contains both the plugin key 'learning-output-style@claude-plugins-official' and 'claude plugins enable'. No <projectRoot>/.sui-deepbook-course/state.json is created — runStart short-circuits before loadState (start.ts:24-36).",
+    "impact": "AC-1.1 + AC-1.3 satisfied for the explicit-false branch. Round-1 H002 fix landed correctly.",
+    "recommendation": "No change needed.",
+    "evidence": "const PLUGIN_NOT_ENABLED_WARNING: OutputStyleWarning = { kind: 'output-style-plugin-not-enabled', message: `The learning output style plugin is not enabled. To activate it, run: claude plugins enable learning-output-style@claude-plugins-official` };",
+    "confidence": "high"
+  },
+  {
+    "id": "R2-002",
+    "title": "E-002 enabledPlugins missing entirely: same warning shape; no state.json",
+    "severity": "info",
+    "category": "e2e-flow",
+    "file": "mcp/server/src/outputStyle.ts",
+    "line_range": "51-59",
+    "description": "Scenario E-002 variant: settings.json contains { otherSetting: true } with no enabledPlugins key. probeOutputStyle returns ok:false with warning.kind === 'output-style-plugin-not-enabled' whose message contains both the plugin key and 'claude plugins enable'. start propagates the warning into result.warnings and skips loadState; <projectRoot>/.sui-deepbook-course/state.json is absent. Verified live via runStart with HOME stubbed.",
+    "impact": "AC-1.1 covered for the missing-key branch.",
+    "recommendation": "No change needed.",
+    "evidence": "if (typeof parsed !== 'object' || parsed === null || !('enabledPlugins' in parsed) || typeof (parsed as Record<string, unknown>)['enabledPlugins'] !== 'object' || (parsed as Record<string, unknown>)['enabledPlugins'] === null) { return { ok: false, warning: PLUGIN_NOT_ENABLED_WARNING }; }",
+    "confidence": "high"
+  },
+  {
+    "id": "R2-003",
+    "title": "E-002 plugin key absent (enabledPlugins={}): same warning shape; no state.json",
+    "severity": "info",
+    "category": "e2e-flow",
+    "file": "mcp/server/src/outputStyle.ts",
+    "line_range": "61-68",
+    "description": "Scenario E-002 third variant: settings.json contains { enabledPlugins: {} } so the plugin key is absent. probeOutputStyle returns ok:false with PLUGIN_NOT_ENABLED_WARNING — kind 'output-style-plugin-not-enabled', message names the plugin key and 'claude plugins enable'. start short-circuits and no state.json is created. Verified live via runStart against a temp project root.",
+    "impact": "AC-1.1 covered for the absent-key branch — round-1 reviewers had flagged outputStyle.ts:53,63 as returning bare {ok:false}; both branches now return the structured warning.",
+    "recommendation": "No change needed.",
+    "evidence": "const pluginEnabled = enabledPlugins[PLUGIN_KEY]; if (pluginEnabled === true) { return { ok: true }; } return { ok: false, warning: PLUGIN_NOT_ENABLED_WARNING };",
+    "confidence": "high"
+  },
+  {
+    "id": "R2-004",
+    "title": "E-003 sui-pilot preflight + remediation: pass:false with exact message, flip → pass:true",
+    "severity": "info",
+    "category": "e2e-flow",
+    "file": "mcp/server/src/probes/suiPilot.ts",
+    "line_range": "29-56",
+    "description": "Scenario E-003: with sui-pilot disabled in ~/.claude/settings.json (only 'learning-output-style@claude-plugins-official': true present), runProbe('sui-pilot-enabled', {}) returns pass:false with message exactly 'sui-pilot plugin is not enabled. Run: claude plugins enable sui-pilot'. After flipping settings to add 'sui-pilot@alilloig': true, the probe returns pass:true. The probe accepts any 'sui-pilot@<source>' suffix (Object.entries(...).some keystart check). Round-1 passing assertion still holds.",
+    "impact": "AC-2.1 satisfied. The remediation message is byte-exact and the flip path resumes cleanly.",
+    "recommendation": "No change needed.",
+    "evidence": "const found = Object.entries(enabledPlugins).some( ([key, value]) => key.startsWith('sui-pilot@') && value === true, ); ... return { pass: false, message: 'sui-pilot plugin is not enabled. Run: claude plugins enable sui-pilot' };",
+    "confidence": "high"
+  }
+]

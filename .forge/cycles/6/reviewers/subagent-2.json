@@ -1,0 +1,41 @@
+[
+  {
+    "id": "R2-001",
+    "title": "outputStyle.ts emits warning kind not declared in warnings.ts union (settings-file-malformed vs settings-parse-error)",
+    "severity": "medium",
+    "category": "design",
+    "confidence": "high",
+    "file": "mcp/server/src/outputStyle.ts",
+    "line_range": "42-49",
+    "description": "outputStyle.ts:45 returns warning with kind='settings-file-malformed' on the malformed-JSON branch, but warnings.ts declares the union member as kind='settings-parse-error'. The two literals diverge, so the discriminated union narrowing in start.ts can never match this warning, and downstream consumers that key off the kind silently miss the case. Cycle 6 H002 introduced 'output-style-plugin-not-enabled' and added it to the union correctly, but didn't audit the pre-existing kind labels against the union — this divergence likely predates cycle 6 but cycle 6's changes draw attention to it.",
+    "impact": "Type-narrowing breaks for the malformed-JSON refusal branch. Any caller pattern-matching on the kind discriminator silently treats this case as unhandled. Same silent-failure shape that H002 was specifically introduced to fix on the disabled-plugin branch.",
+    "recommendation": "Audit warnings.ts union vs every emitter site in cycle-1 through cycle-6 source. Either rename the warnings.ts member to 'settings-file-malformed' (matching the emitter) or rename the emitter at outputStyle.ts:45 to 'settings-parse-error' (matching the union). Also drop unused union members like 'learning-output-style-disabled' that were superseded by 'output-style-plugin-not-enabled'.",
+    "evidence": "outputStyle.ts:45 emits {kind:'settings-file-malformed', ...}; warnings.ts:44-47 declares the union case as {kind:'settings-parse-error', ...}. Cross-reference: cycle-6 synthesis-notes documents H002 introducing 'output-style-plugin-not-enabled' but does NOT document a rename of the existing kinds."
+  },
+  {
+    "id": "R2-002",
+    "title": "probeOpts threading uses raw Partial<Record<>> rather than a named ProbeOptionsMap type",
+    "severity": "low",
+    "category": "design",
+    "confidence": "medium",
+    "file": "mcp/server/src/tools/runPreflightProbe.ts",
+    "line_range": "10-60",
+    "description": "Cycle 6 H004 added Partial<Record<ProbeId, ProbeOptions>> as the new probeOpts shape on runPreflightProbe. The same shape will appear at every callsite that wants to thread spawn stubs through preflight. A named type alias (e.g. type ProbeOptionsMap = Partial<Record<ProbeId, ProbeOptions>>) at the preflight module's public surface would let the harness, tests, and future callers reuse the symbol rather than retyping the structural form.",
+    "impact": "Minor readability / maintainability. Future callers will copy-paste the structural form instead of importing a named type. Refactoring the shape later (e.g., adding per-probe timeouts) becomes an N-callsite change.",
+    "recommendation": "Add `export type ProbeOptionsMap = Partial<Record<ProbeId, ProbeOptions>>;` to mcp/server/src/preflight.ts and use it at runPreflightProbe.ts and any test fixtures that build the map. Non-blocking.",
+    "evidence": "runPreflightProbe.ts:36 declares the parameter inline; tests/cycle6.preflight.test.ts likely repeats the literal shape when building the docker-stub fixture."
+  },
+  {
+    "id": "R2-003",
+    "title": "scripts/cycle-e2e-pass.sh duplicates 3 nearly-identical version-parser helpers",
+    "severity": "low",
+    "category": "design",
+    "confidence": "high",
+    "file": "scripts/cycle-e2e-pass.sh",
+    "line_range": "31-50",
+    "description": "The script defines three very similar helpers (sui_version_major/minor/patch) that all do the same regex extraction differing only by which capture group they return. A single parser that emits all three components into a record (e.g., 'echo \"$major $minor $patch\"' read into a triple) would shrink the script and reduce drift risk if the version-string format changes.",
+    "impact": "Low — extra LOC and a small drift risk if the sui-cli version string format changes. Script behavior is correct today.",
+    "recommendation": "Consolidate to a single 'parse_sui_version' function returning all three components; update the comparison block to read once.",
+    "evidence": "scripts/cycle-e2e-pass.sh:31-50 in the applied worker-4 candidate."
+  }
+]

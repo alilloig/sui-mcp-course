@@ -1,0 +1,93 @@
+[
+  {
+    "id": "R1-001",
+    "title": "rung-3 silently drops verifySpot error string from autoVerifyResult",
+    "severity": "low",
+    "category": "correctness",
+    "file": "mcp/server/src/tools/requestHint.ts",
+    "line_range": "281-295",
+    "description": "After dispatching runVerifySpot in the rung-3 path, the handler builds AutoVerifyResult as { pass, advanced, output } and ignores verifyResult.error. runVerifySpot can return error fields in three cases: (a) outputStyleOk gate flipped between requestHint's gate and the dispatched verify; (b) M002 'verification passed but state persist failed' (verifyResult: { pass: true, advanced: false, error: '...' }); (c) M001 VerificationModeUnsupportedError mapped to error string. In all three cases the student sees autoVerifyResult.{pass, advanced} but no diagnostic of why advanced=false despite pass=true (case b) or why pass=false (cases a/c).",
+    "impact": "Observability gap, not a functional defect. The student/agent can still re-attempt verifySpot. But for case (b) — saveState failed during cursor advance — the student has no signal that the cursor failure was a persistence issue (recoverable on retry) vs a verification failure (requires editing). The course-conductor agent will narrate 'verification did not advance' without context.",
+    "recommendation": "Either widen AutoVerifyResult to include an optional `error?: string` field passed through from verifyResult.error, or document explicitly in the contract that downstream verify errors are intentionally suppressed at the requestHint boundary. The first option is small and matches the M002 carry-forward's intent of surfacing state-save-failed everywhere.",
+    "evidence": "const autoVerifyResult: AutoVerifyResult = {\n    pass: verifyResult.pass,\n    advanced: verifyResult.advanced ?? false,\n    output: verifyResult.output,\n  };",
+    "confidence": "high"
+  },
+  {
+    "id": "R1-002",
+    "title": "snapshot rotation timestamp may collide within same millisecond, overwriting prior rotation",
+    "severity": "low",
+    "category": "correctness",
+    "file": "mcp/server/src/ladder.ts",
+    "line_range": "190-205",
+    "description": "Snapshot rotation uses `new Date().toISOString().replace(/:/g, '')` for the rotated suffix. Two rung-3 invocations against the same spot occurring within the same millisecond would compute the same timestamp string. The first rotation succeeds; the second `fsPromises.rename(bakPath, rotatedPath)` would overwrite the prior rotated file (POSIX rename is atomic-overwrite), losing the older snapshot. Compare to state.ts's archiveCorruptFile which adds a monotonic `archiveCounter` suffix exactly to avoid this collision class.",
+    "impact": "Data loss on rapid retry — only meaningful in test harness or scripted retries (a human student is unlikely to invoke rung-3 twice within 1ms). Practically rare but the snapshot-as-recovery contract claims 'every prior version recoverable' which this violates under the rare collision.",
+    "recommendation": "Append a monotonic counter or `process.hrtime.bigint()` nanosecond suffix to the rotated path, mirroring state.ts's archiveCounter pattern. One-line fix.",
+    "evidence": "const ts = new Date().toISOString().replace(/:/g, '');\n    const rotatedPath = `${bakPath}.${ts}`;\n    await fsPromises.rename(bakPath, rotatedPath);",
+    "confidence": "high"
+  },
+  {
+    "id": "R1-003",
+    "title": "mkdir failure during snapshot is not wrapped as AutoWriteError, escaping the typed kind enum",
+    "severity": "low",
+    "category": "correctness",
+    "file": "mcp/server/src/ladder.ts",
+    "line_range": "184-186",
+    "description": "`fsPromises.mkdir(snapshotsDir, { recursive: true })` is called without a surrounding try/catch. On failure (e.g. EACCES on the projectRoot, ENOSPC, EROFS), the raw NodeJS.ErrnoException propagates out of runAutoWrite. The caller's `catch (err)` checks `err instanceof AutoWriteError` and falls through to the generic branch, surfacing `auto-write-failed: <message>` without a typed `kind` field. The contract documents four AutoWriteErrorKind values; mkdir failures fall outside that set and produce a less-structured error.",
+    "impact": "Diagnostic loss only — the student still gets an error response with kind:'auto-write-failed', just without the four-way subkind discriminator. No state corruption (mkdir runs before any write).",
+    "recommendation": "Wrap the mkdir call in try/catch and throw `new AutoWriteError('snapshot-write-failed', \\`Failed to create snapshots directory: ${e.message}\\`)`. The 'snapshot-write-failed' kind is the closest semantic fit per the contract's enum.",
+    "evidence": "const snapshotsDir = path.join(projectRoot, STATE_DIR, SNAPSHOTS_DIR);\n  await fsPromises.mkdir(snapshotsDir, { recursive: true });",
+    "confidence": "high"
+  },
+  {
+    "id": "R1-004",
+    "title": "runAutoWrite reports snapshot byte count as bytesWritten, not target_file payload bytes",
+    "severity": "info",
+    "category": "correctness",
+    "file": "mcp/server/src/ladder.ts",
+    "line_range": "237-242",
+    "description": "The `bytesWritten` field of AutoWriteResult is computed as `Buffer.byteLength(snapshotContent, 'utf8')` — i.e. the size of the original lines that got snapshotted, not the new content written to target_file. The field name 'bytesWritten' more naturally suggests the bytes written to the load-bearing file (target_file). T-051 only asserts `bytesWritten > 0` so the test passes either way, but consumers reading the field may misinterpret it.",
+    "impact": "No functional impact (the value is not used downstream beyond being returned). Naming/semantic ambiguity only.",
+    "recommendation": "Either rename to `snapshotBytes` (clarifying intent) or compute against `Buffer.byteLength(newContent, 'utf8')` to match the field name. Pick whichever the contract author intended; current code matches the stricter test reading.",
+    "evidence": "const bytesWritten = Buffer.byteLength(snapshotContent, 'utf8');\n\n  return {\n    backupPath: bakPath,\n    bytesWritten,\n  };",
+    "confidence": "high"
+  },
+  {
+    "id": "R1-005",
+    "title": "unused local 'savedState' in rung-3 branch",
+    "severity": "info",
+    "category": "correctness",
+    "file": "mcp/server/src/tools/requestHint.ts",
+    "line_range": "265-278",
+    "description": "Line 266 declares `let savedState = newState;` but the variable is never read. The variable was likely intended to flow through to the `runVerifySpot` dispatch or to compute the post-save ladder, but `runVerifySpot` re-loads from disk and the response uses `newLadder` derived directly from `newState`. Dead assignment.",
+    "impact": "No functional impact. Suggests an aborted refactor or copy-paste residue.",
+    "recommendation": "Remove the line. If intended to gate response on save success, replace with the existing try/catch (which already returns early on rejection).",
+    "evidence": "let savedState = newState;\n  try {\n    await saveState(projectRoot, newState);",
+    "confidence": "high"
+  },
+  {
+    "id": "R1-006",
+    "title": "rungFile fallback is reachable but spot.rungs is the documented canonical source",
+    "severity": "info",
+    "category": "correctness",
+    "file": "mcp/server/src/tools/requestHint.ts",
+    "line_range": "175-189",
+    "description": "When `spot.rungs?.hint_md|reference_md|auto_write_md` is undefined, the code falls back to `paths/<slug>/rungs/<spot.id>/<rungFile>`. Phases.json declares the `rungs` block for p1-spot-1 but not for p2/p3 stub spots. For cycle 5 this is harmless because gating excludes done state and the only complete spot is p1-spot-1 (which has rungs declared). But the fallback hardcodes the path layout 'paths/<slug>/rungs/<spot.id>/...' which duplicates the manifest's responsibility for declaring file locations and silently masks a 'missing rungs declaration' authoring bug.",
+    "impact": "Curriculum authors who forget to declare `rungs` in phases.json get a working tool by accident — masking the omission until a path renames the rungs/ directory, at which point the silent fallback breaks the rung loop without a clear diagnostic.",
+    "recommendation": "Either remove the fallback entirely (require `spot.rungs.{hint_md,reference_md,auto_write_md}` to be present, surfacing 'rung-content-missing' or a new 'spot-rungs-undeclared' kind) or log a warning when the fallback fires. The current behavior is permissive but obscures authoring errors.",
+    "evidence": "const rungContentPath = rungRelPath\n    ? path.join(projectRoot, 'paths', slug, rungRelPath)\n    : path.join(projectRoot, 'paths', slug, 'rungs', spot.id, rungFile);",
+    "confidence": "medium"
+  },
+  {
+    "id": "R1-007",
+    "title": "AutoWriteFailedWarning type uses kind_detail field, diverges from contract spec",
+    "severity": "info",
+    "category": "correctness",
+    "file": "mcp/server/src/warnings.ts",
+    "line_range": "107-112",
+    "description": "Contract A.warnings.ts entry says: `auto-write-failed (carries `spotId: string`, `kind: 'target-file-missing' | 'target-range-invalid' | 'snapshot-write-failed' | 'overwrite-failed'`, `message: string`)`. The implementation uses `kind: 'auto-write-failed'` as the union discriminant and renames the inner classifier to `kind_detail` (a non-standard suffix). This diverges from the contract literal but resolves a discriminated-union conflict the contract didn't anticipate (two `kind` fields with different semantics on one interface). The warning type is also currently never emitted at runtime — `requestHint` returns errors via its own discriminated union, not as EngineWarning instances — so the type is documentation-only.",
+    "impact": "Cosmetic / contract-text drift only. Future code that emits this warning shape will need to use `kind_detail` instead of the contract-suggested nested `kind`, slightly more friction for consumers.",
+    "recommendation": "Either flatten kind_detail values into the discriminant (e.g. `kind: 'auto-write-target-file-missing' | ...`) or add a contract amendment noting the kind_detail rename. Lowest-friction fix: add a code comment explaining the rename's reason.",
+    "evidence": "export interface AutoWriteFailedWarning {\n  kind: 'auto-write-failed';\n  spotId: string;\n  kind_detail: 'target-file-missing' | 'target-range-invalid' | 'snapshot-write-failed' | 'overwrite-failed';\n  message: string;\n}",
+    "confidence": "high"
+  }
+]

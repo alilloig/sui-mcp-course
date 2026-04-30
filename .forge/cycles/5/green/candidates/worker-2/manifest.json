@@ -1,0 +1,17 @@
+{
+  "worker": 2,
+  "target_files": [
+    "mcp/server/src/ladder.ts",
+    "mcp/server/src/tools/requestHint.ts",
+    "mcp/server/src/schemas/phases.ts",
+    "mcp/server/src/warnings.ts"
+  ],
+  "lines_changed": 102,
+  "blocked": false,
+  "design_notes": {
+    "helper_location": "containedPath + PathTraversalError defined in mcp/server/src/ladder.ts (primary consumer); exported and re-imported in tools/requestHint.ts for the rung-content-path site",
+    "schema_validation": "validateSlug (SLUG_RE /^[a-z0-9][a-z0-9_-]*$/) applied to phase.id and spot.id; validateRelativePath (no absolute, no .. segments) applied to target_file and rungs.{hint_md,reference_md,auto_write_md} in validatePhases",
+    "error_translation": "PathTraversalError caught at all 3 sites and returned as { kind: 'auto-write-failed', message: 'auto-write-failed (path-traversal): ...' } — compatible with existing RequestHintError discriminated union",
+    "warnings_update": "AutoWriteFailedWarning.kind_detail extended with 'path-traversal' literal"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "sui-deepbook-course",
+  "version": "0.1.0",
+  "description": "Interactive course framework for advanced Sui/DeepBook developers",
+  "mcpServers": {
+    "sui-deepbook-course": {
+      "command": "node",
+      "args": ["mcp/server/dist/index.js"],
+      "cwd": "${pluginRoot}"
+    }
+  },
+  "commands": "commands/",
+  "agents": [],
+  "skills": "skills/",
+  "hooks": []
+}

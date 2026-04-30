@@ -1,0 +1,93 @@
+[
+  {
+    "id": "R4-001",
+    "title": "Dead local variable: savedState assigned but never read",
+    "severity": "low",
+    "category": "simplicity",
+    "file": "mcp/server/src/tools/requestHint.ts",
+    "line_range": "266-266",
+    "description": "In the rung-3 path, `let savedState = newState;` is declared and assigned but never read or reassigned anywhere in the function. The subsequent `saveState(projectRoot, newState)` call uses `newState` directly. The `savedState` variable is pure dead code.",
+    "impact": "Reader confusion — the name implies post-save bookkeeping that does not exist, suggesting half-finished editing. Trivially removable. tsc --strict does not catch this because it's an initialized binding.",
+    "recommendation": "Delete line 266. The block reads cleanly without it.",
+    "evidence": "let savedState = newState;",
+    "confidence": "high"
+  },
+  {
+    "id": "R4-002",
+    "title": "Unused import: advanceCursor in requestHint.ts",
+    "severity": "low",
+    "category": "simplicity",
+    "file": "mcp/server/src/tools/requestHint.ts",
+    "line_range": "4-4",
+    "description": "`advanceCursor` is imported from `../phaseEngine.js` but never referenced in the file. Cursor advancement on rung-3 pass is handled by the dispatched `runVerifySpot` call, not by requestHint itself, so this import is leftover.",
+    "impact": "Misleads readers into thinking requestHint mutates the cursor directly (it doesn't — verifySpot does). Trivial cleanup. Strict TS would flag with `noUnusedLocals`/`noUnusedParameters` if enabled but those aren't on here.",
+    "recommendation": "Remove `advanceCursor` from the destructured import on line 4.",
+    "evidence": "import { loadPhases, getCurrentSpot, advanceCursor } from '../phaseEngine.js';",
+    "confidence": "high"
+  },
+  {
+    "id": "R4-003",
+    "title": "autoWriteResult assigned but never consumed",
+    "severity": "low",
+    "category": "simplicity",
+    "file": "mcp/server/src/tools/requestHint.ts",
+    "line_range": "238-259",
+    "description": "The rung-3 path declares `let autoWriteResult: { backupPath: string; bytesWritten: number }` and assigns the return value of `runAutoWrite`, but the `autoWriteResult` variable is never read afterward. The agent docstring (course-conductor.md line 52-53) says the conductor should narrate the snapshot path, but the response object discards `backupPath` entirely — it is not surfaced anywhere.",
+    "impact": "Reader thinks the data is used. The narration affordance promised by the agent spec is broken because the API never returns the path. Either the variable should be deleted (await the call without binding) and the agent spec adjusted, or `backupPath` should be added to the rung-3 success response so the conductor can actually narrate it.",
+    "recommendation": "Either (a) drop the binding: `await runAutoWrite(projectRoot, spot as SpotData, payload);` and remove the agent-spec line that references it, or (b) include `backupPath` in the rung-3 RequestHintResult so it can be narrated by the conductor.",
+    "evidence": "let autoWriteResult: { backupPath: string; bytesWritten: number };\n  try {\n    autoWriteResult = await runAutoWrite(projectRoot, spot as SpotData, payload);",
+    "confidence": "high"
+  },
+  {
+    "id": "R4-004",
+    "title": "Redundant let-declarations for startLine/endLine in runAutoWrite",
+    "severity": "low",
+    "category": "simplicity",
+    "file": "mcp/server/src/ladder.ts",
+    "line_range": "150-161",
+    "description": "`let startLine: number; let endLine: number;` are declared above the `if (!rangeMatch) throw` then assigned on lines 160-161 after the throw. Because the throw exits the function, the `let` separation buys nothing — both could be `const` immediately after the throw block. The split obscures that these values are immutable post-parse.",
+    "impact": "Mild verbosity / Move-2024-style nit (prefer const). Five lines collapse to two cleaner const-declarations. Not a behavior issue.",
+    "recommendation": "Replace `let startLine: number; let endLine: number;` ... `startLine = parseInt(...); endLine = parseInt(...);` with `const startLine = parseInt(rangeMatch[1], 10); const endLine = parseInt(rangeMatch[2], 10);` after the throw block.",
+    "evidence": "let startLine: number;\n  let endLine: number;\n\n  if (!rangeMatch) {\n    throw new AutoWriteError(",
+    "confidence": "high"
+  },
+  {
+    "id": "R4-005",
+    "title": "AutoWriteResult.bytesWritten reports snapshot byte count, not overwrite byte count",
+    "severity": "low",
+    "category": "simplicity",
+    "file": "mcp/server/src/ladder.ts",
+    "line_range": "237-242",
+    "description": "`bytesWritten` is computed as `Buffer.byteLength(snapshotContent, 'utf8')` — the size of the .bak snapshot file, not the bytes written to the target_file. The contract (file list bullet for ladder.ts) says runAutoWrite returns `{ backupPath: string; bytesWritten: number }` and reviewer comment in tests/ladder.test.ts checks `bytesWritten > 0`. Either the field name or the value source is misleading: a caller would reasonably assume `bytesWritten` reports the overwrite size (the side-effect of interest), not the snapshot.",
+    "impact": "Misleading API surface for a value that nobody actually consumes today (R4-003 also notes the result is dropped). If a future caller uses bytesWritten to log/instrument the overwrite, they'll get the snapshot bytes instead.",
+    "recommendation": "Either (a) rename to `snapshotBytes` for accuracy, or (b) change to `Buffer.byteLength(newContent, 'utf8')` so the field semantically describes the overwrite. Pick one and align the docstring.",
+    "evidence": "const bytesWritten = Buffer.byteLength(snapshotContent, 'utf8');\n\n  return {\n    backupPath: bakPath,\n    bytesWritten,\n  };",
+    "confidence": "medium"
+  },
+  {
+    "id": "R4-006",
+    "title": "rungFilename + rungRelPath dual-path lookup adds branching for an always-defined manifest field",
+    "severity": "info",
+    "category": "simplicity",
+    "file": "mcp/server/src/tools/requestHint.ts",
+    "line_range": "64-68, 174-189",
+    "description": "The handler computes a `rungFile` (via the helper `rungFilename`) AND consults `spot.rungs?.{hint_md|reference_md|auto_write_md}`, then falls back to a canonical path `paths/<slug>/rungs/<spot.id>/<rungFile>` if `spot.rungs` is undefined. In practice the production phases.json (paths/01-orderbook-viewer/phases.json) always declares `rungs`, and the schema validates it when present. The fallback path is never exercised by the test fixtures or production. Two helpers + an if/else cascade + a ternary on the path-build implement what could be a single lookup against `spot.rungs`.",
+    "impact": "Defensive double-path adds reading overhead and creates a code path nobody tests against. If `spot.rungs` is intended to be optional indefinitely, the fallback is fine; if it's required by schema in practice, this is dead branching.",
+    "recommendation": "If `rungs` is always present in well-formed phases.json, treat its absence as an authoring error and surface it as `phases-load-failed` (or a new schema validation kind) rather than silently falling back to a convention. Otherwise, leave a comment explaining when the fallback fires.",
+    "evidence": "const rungContentPath = rungRelPath\n    ? path.join(projectRoot, 'paths', slug, rungRelPath)\n    : path.join(projectRoot, 'paths', slug, 'rungs', spot.id, rungFile);",
+    "confidence": "low"
+  },
+  {
+    "id": "R4-007",
+    "title": "Cycle5Warning union types are defined but never imported anywhere",
+    "severity": "low",
+    "category": "simplicity",
+    "file": "mcp/server/src/warnings.ts",
+    "line_range": "101-122",
+    "description": "`StateSaveFailedWarning`, `AutoWriteFailedWarning`, `OutputStyleDisabledWarning`, and the `Cycle5Warning` union are added to satisfy the static greps in T-085/T-086/T-087 (which only check that the strings 'state-save-failed', 'auto-write-failed', 'output-style-disabled' appear in warnings.ts). No code imports `Cycle5Warning` or any of the three new interfaces — the actual error responses in requestHint.ts/selectPath.ts/etc. construct ad-hoc literal objects (e.g. `{ kind: 'state-save-failed', message: ... }`) without referencing the declared types. The `AutoWriteFailedWarning` even uses `kind_detail` while requestHint flattens to `auto-write-failed (${err.kind}): ${err.message}` — the schema is decorative, not load-bearing.",
+    "impact": "Type drift: the declared warning shapes can diverge from what tools actually emit because nothing checks. The interfaces exist purely to pass grep-based tests, which is the kind of dead schema the consolidator should consider removing or wiring through.",
+    "recommendation": "Either (a) make tools' error-construction sites consume these interfaces (typed at the boundary, not literal), or (b) replace the three interfaces with three exported string constants that the test greps still match, eliminating the unused type declarations.",
+    "evidence": "export interface AutoWriteFailedWarning {\n  kind: 'auto-write-failed';\n  spotId: string;\n  kind_detail: 'target-file-missing' | ...;\n  message: string;\n}",
+    "confidence": "medium"
+  }
+]

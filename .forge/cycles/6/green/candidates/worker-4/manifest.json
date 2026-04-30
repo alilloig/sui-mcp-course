@@ -1,0 +1,25 @@
+{
+  "worker": 4,
+  "target_files": [
+    "paths/01-orderbook-viewer/phases.json",
+    "paths/01-orderbook-viewer/rungs/p2-spot-1/hint.md",
+    "paths/01-orderbook-viewer/rungs/p2-spot-1/reference.md",
+    "paths/01-orderbook-viewer/rungs/p2-spot-1/auto.md",
+    "paths/01-orderbook-viewer/rungs/p3-spot-1/hint.md",
+    "paths/01-orderbook-viewer/rungs/p3-spot-1/reference.md",
+    "paths/01-orderbook-viewer/rungs/p3-spot-1/auto.md",
+    "paths/01-orderbook-viewer/phases/p2.md",
+    "paths/01-orderbook-viewer/phases/p3.md",
+    "mcp/server/src/outputStyle.ts",
+    "mcp/server/src/warnings.ts",
+    "mcp/server/src/state.ts",
+    "mcp/server/src/tools/selectPath.ts",
+    "mcp/server/src/tools/runPreflightProbe.ts",
+    ".forge/e2e/scenarios.json",
+    "scripts/cycle-e2e-pass.sh"
+  ],
+  "lines_changed": 185,
+  "blocked": false,
+  "tests_pass": null,
+  "notes": "Fix 1 (H001): phases.json renames p2-polling→p2-retry (target_range 103-114) and p3-display→p3-poll (target_range 116-145); p3-spot-1 prompt contains {{ poll_interval_ms }}; both phases have rungs blocks, doc_links, verification, and explainer_md. Fix 1 follow-on: 8 new content files for p2/p3 rungs and phase explainers. Fix 2 (H002): outputStyle.ts both bare {ok:false} branches now return {ok:false,warning:{kind:'output-style-plugin-not-enabled',...}}; warnings.ts adds OutputStylePluginNotEnabledWarning type. Fix 3 (H003): state.ts dedup-archives identical corrupt bytes via findExistingArchive scan; selectPath.ts treats corrupt+archivedTo as absent and mints fresh state. Fix 4 (H004): runPreflightProbe.ts accepts probeOpts:Partial<Record<ProbeId,ProbeOptions>> and threads it through runDeployRemediation. Fix 5 (H005): scenarios.json E-008 gets 5th precondition 'Sui CLI in 1.63.2–1.64.1'; scripts/cycle-e2e-pass.sh created (executable) with skip-with-reason logic for E-008 when sui-cli is out of range. Fix 6 (H001 ladder reachability): automatic via phase rename."
+}
