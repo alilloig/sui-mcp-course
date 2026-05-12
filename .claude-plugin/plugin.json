@@ -1,6 +1,6 @@
 {
   "name": "acc-deepbook-course",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "DeepBook content for the Agentic Community College (ACC) framework. Bundles a set of hands-on lessons that walk learners through building Sui DeepBook integrations end-to-end.",
   "author": {
     "name": "alilloig"
@@ -13,6 +13,7 @@
     "lesson",
     "acc-content"
   ],
+  "commands": ["./commands/start.md"],
   "accContent": {
     "lessons": "./lessons/",
     "probes": [
