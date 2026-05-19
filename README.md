@@ -22,7 +22,7 @@ Requires `agentic-community-college@contract-hero` ≥ `0.2.0` and Docker runnin
 ## Links
 
 - **Landing page** — <https://alilloig.github.io/acc-deepbook-course/>
-- **Framework** — [`agentic-community-college`](https://github.com/alilloig/agentic-community-college)
+- **Framework** — [`agentic-community-college`](https://github.com/contract-hero/agentic-community-college)
 - **Marketplace** — [`contract-hero/plugin-marketplace`](https://github.com/contract-hero/plugin-marketplace)
 - **Reference sandbox** — [`MystenLabs/deepbook-sandbox`](https://github.com/MystenLabs/deepbook-sandbox) (auto-cloned by ACC; you don't have to)
 

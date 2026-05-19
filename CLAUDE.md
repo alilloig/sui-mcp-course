@@ -1,6 +1,6 @@
 # acc-deepbook-course — Claude's working notes
 
-A content plugin for the [Agentic Community College (ACC)](https://github.com/alilloig/agentic-community-college) framework. Bundles the DeepBook lessons. **No runtime code here** — the framework owns that.
+A content plugin for the [Agentic Community College (ACC)](https://github.com/contract-hero/agentic-community-college) framework. Bundles the DeepBook lessons. **No runtime code here** — the framework owns that.
 
 If you're looking at this repo with confusion, the directory may still be named `sui-mcp-course/` on disk while the plugin name has been updated to `acc-deepbook-course`. The directory rename + GitHub repo rename are manual user actions; they're cosmetic, since the plugin manifest is what Claude Code reads.
 
